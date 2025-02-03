@@ -134,7 +134,7 @@ pip install -r requirements.txt
 启动服务
 
 ```shell
-gunicorn -w 4 -b 0.0.0.0:5001 app:app
+python app.py
 ```
 
 ## 接口列表
