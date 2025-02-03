@@ -127,7 +127,7 @@ pip install -r requirements.txt
 
 配置 config.json
 
-在当前目录下，修改 config.json文件
+在当前目录下，修改 config.json 文件
  * keys - 你的 API 鉴权密钥
  * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
 
