@@ -1,4 +1,4 @@
 flask
-requests
 wasmtime
-gunicorn
+curl_cffi
+transformers
