@@ -220,7 +220,7 @@ def call_completion_endpoint(payload, headers, stream, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         try:
-            deepseek_resp = requests.post(DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=stream)
+            deepseek_resp = requests.post(DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True)
         except Exception as e:
             app.logger.warning(f"[call_completion_endpoint] 请求异常: {e}")
             time.sleep(1)
