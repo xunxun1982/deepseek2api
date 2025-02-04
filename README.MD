@@ -16,6 +16,7 @@
   * [多账号接入](#多账号接入)
 * [Docker部署](#Docker部署)
 * [Docker-compose部署](#Docker-compose部署)
+* [Vercel部署](#Vercel部署)
 * [原生部署](#原生部署)
 * [接口列表](#接口列表)
   * [模型列表](#模型列表)
@@ -148,6 +149,15 @@ docker restart deepseek2api
 ```shell
 docker stop deepseek2api
 ```
+
+## Vercel部署
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/iidamie/deepseek2api)
+
+部署完后，返回你的 Github 仓库配置 config.json
+ * keys - 你的 API 鉴权密钥
+ * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+
 
 ## 原生部署
 
