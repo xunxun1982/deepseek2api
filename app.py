@@ -4,7 +4,6 @@ import base64
 import time
 import logging
 from curl_cffi import requests
-import warnings
 import random
 import http.client as http_client
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify, g
@@ -18,14 +17,13 @@ import transformers
 # -------------------------- 初始化 tokenizer --------------------------
 chat_tokenizer_dir = "./"  # 请确保目录下有正确的 tokenizer 配置文件或模型文件
 tokenizer = transformers.AutoTokenizer.from_pretrained(chat_tokenizer_dir, trust_remote_code=True)
-# ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
 # =========================== 日志配置 ===========================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 )
-
 app = Flask(__name__)
 
 # -------------------- 全局添加 CORS 支持 --------------------
@@ -42,16 +40,16 @@ def handle_options_request():
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
-# -----------------------------------------------------------
 
-# 全局集合：记录当前正在对话中的账号（以 email 标识），保证同一账号同时只进行一个对话
+# ----------------------------------------------------------------------
+# 全局集合：记录当前正在对话中的账号（以 email 或 phone 标识），保证同一账号同时只进行一个对话
 active_accounts = set()
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (1) 配置文件的读写函数
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 CONFIG_PATH = "config.json"
 
 def load_config():
@@ -74,15 +72,15 @@ def save_config(cfg):
 
 CONFIG = load_config()
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (2) DeepSeek 相关常量
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 DEEPSEEK_HOST = "chat.deepseek.com"
 
-DEEPSEEK_LOGIN_URL          = f"https://{DEEPSEEK_HOST}/api/v0/users/login"
+DEEPSEEK_LOGIN_URL = f"https://{DEEPSEEK_HOST}/api/v0/users/login"
 DEEPSEEK_CREATE_SESSION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat_session/create"
-DEEPSEEK_CREATE_POW_URL     = f"https://{DEEPSEEK_HOST}/api/v0/chat/create_pow_challenge"
-DEEPSEEK_COMPLETION_URL     = f"https://{DEEPSEEK_HOST}/api/v0/chat/completion"
+DEEPSEEK_CREATE_POW_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/create_pow_challenge"
+DEEPSEEK_COMPLETION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/completion"
 
 BASE_HEADERS = {
     'Host': "chat.deepseek.com",
@@ -100,28 +98,45 @@ BASE_HEADERS = {
 # WASM 模块文件路径（请确保文件存在）
 WASM_PATH = "sha3_wasm_bg.7b9ca65ddd.wasm"
 
-# -------------------------------------------------------------------
-# (3) 登录函数：使用账号登录获取 token（成功后写回配置文件）
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# 辅助函数：获取账号唯一标识（优先 email，否则 mobile）
+# ----------------------------------------------------------------------
+def get_account_identifier(account):
+    """返回账号的唯一标识，优先使用 email，否则使用 mobile"""
+    return account.get("email", "").strip() or account.get("mobile", "").strip()
+
+# ----------------------------------------------------------------------
+# (3) 登录函数：支持使用 email 或 mobile 登录
+# ----------------------------------------------------------------------
 def login_deepseek_via_account(account):
-    """
-    使用 account 中的 email/password 登录 DeepSeek，
-    成功后将返回的 token 写入 account 并保存至配置文件，返回新 token。
-    """
-    email = account.get("email", "")
-    password = account.get("password", "")
-    if not email or not password:
-        raise ValueError("账号缺少 email 或 password，无法登录 DeepSeek")
+    """使用 account 中的 email 或 mobile 登录 DeepSeek，
+    成功后将返回的 token 写入 account 并保存至配置文件，返回新 token。"""
+    email = account.get("email", "").strip()
+    mobile = account.get("mobile", "").strip()
+    password = account.get("password", "").strip()
+    if not password or (not email and not mobile):
+        raise ValueError("账号缺少必要的登录信息（必须提供 email 或 mobile 以及 password）")
     
-    app.logger.info(f"[login_deepseek_via_account] 正在登录账号：{email}")
-    payload = {
-        "email": email,
-        "mobile": "",
-        "password": password,
-        "area_code": "",
-        "device_id": "deepseek_to_api",
-        "os": "android"
-    }
+    if email:
+        app.logger.info(f"[login_deepseek_via_account] 正在使用 email 登录账号：{email}")
+        payload = {
+            "email": email,
+            "mobile": "",
+            "password": password,
+            "area_code": "",
+            "device_id": "deepseek_to_api",
+            "os": "android"
+        }
+    else:
+        app.logger.info(f"[login_deepseek_via_account] 正在使用 mobile 登录账号：{mobile}")
+        payload = {
+            "mobile": mobile,
+            "area_code": None,
+            "password": password,
+            "device_id": "deepseek_to_api,
+            "os": "android"
+        }
+    
     resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
     app.logger.debug(f"[login_deepseek_via_account] 状态码: {resp.status_code}")
     app.logger.debug(f"[login_deepseek_via_account] 响应体: {resp.text}")
@@ -133,61 +148,61 @@ def login_deepseek_via_account(account):
     new_token = data["data"]["biz_data"]["user"]["token"]
     account["token"] = new_token
     save_config(CONFIG)
-    app.logger.info(f"[login_deepseek_via_account] 成功登录账号 {email}，token: {new_token}")
+    identifier = email if email else mobile
+    app.logger.info(f"[login_deepseek_via_account] 成功登录账号 {identifier}，token: {new_token}")
     return new_token
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (4) 从 accounts 中随机选择一个未忙且未尝试过的账号
-# -------------------------------------------------------------------
-def choose_new_account(exclude_emails):
+# ----------------------------------------------------------------------
+def choose_new_account(exclude_ids):
     accounts = CONFIG.get("accounts", [])
-    available = [acc for acc in accounts if acc.get("email") not in exclude_emails and acc.get("email") not in active_accounts]
+    available = [
+        acc for acc in accounts
+        if get_account_identifier(acc) not in exclude_ids and get_account_identifier(acc) not in active_accounts
+    ]
     if available:
         chosen = random.choice(available)
-        app.logger.info(f"[choose_new_account] 新选择账号: {chosen.get('email')}")
+        app.logger.info(f"[choose_new_account] 新选择账号: {get_account_identifier(chosen)}")
         return chosen
     app.logger.warning("[choose_new_account] 没有可用的账号")
     return None
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (5) 判断调用模式：配置模式 vs 用户自带 token
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def determine_mode_and_token():
-    """
-    根据请求头 Authorization 判断使用哪种模式：
-      - 如果 Bearer token 出现在 CONFIG["keys"] 中，则为配置模式，
-        从 CONFIG["accounts"] 中随机选择一个账号（排除已尝试账号），检查该账号是否已有 token，否则调用登录接口获取；
-      - 否则，直接使用请求中的 Bearer 值作为 DeepSeek token。
+    """根据请求头 Authorization 判断使用哪种模式：
+    - 如果 Bearer token 出现在 CONFIG["keys"] 中，则为配置模式，从 CONFIG["accounts"] 中随机选择一个账号（排除已尝试账号），
+      检查该账号是否已有 token，否则调用登录接口获取；
+    - 否则，直接使用请求中的 Bearer 值作为 DeepSeek token。
     结果存入 g.deepseek_token；配置模式下同时存入 g.account 与 g.tried_accounts。
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return Response(json.dumps({"error": "Unauthorized: missing Bearer token."}),
-                        status=401,
-                        mimetype="application/json")
+                        status=401, mimetype="application/json")
     caller_key = auth_header.replace("Bearer ", "", 1).strip()
     config_keys = CONFIG.get("keys", [])
     if caller_key in config_keys:
         g.use_config_token = True
-        g.tried_accounts = []  # 初始化已尝试账号 email 列表
+        g.tried_accounts = []  # 初始化已尝试账号
         selected_account = choose_new_account(g.tried_accounts)
         if not selected_account:
             return Response(json.dumps({"error": "No accounts configured."}),
-                            status=500,
-                            mimetype="application/json")
+                            status=500, mimetype="application/json")
         if not selected_account.get("token", "").strip():
             try:
                 login_deepseek_via_account(selected_account)
             except Exception as e:
-                app.logger.error(f"[determine_mode_and_token] 账号 {selected_account.get('email')} 登录失败：{e}")
+                app.logger.error(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 登录失败：{e}")
                 return Response(json.dumps({"error": "Account login failed."}),
-                                status=500,
-                                mimetype="application/json")
+                                status=500, mimetype="application/json")
         else:
-            app.logger.info(f"[determine_mode_and_token] 账号 {selected_account.get('email')} 已有 token，无需重新登录")
+            app.logger.info(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 已有 token，无需重新登录")
         g.deepseek_token = selected_account.get("token")
         g.account = selected_account
-        app.logger.info(f"[determine_mode_and_token] 配置模式：使用账号 {selected_account.get('email')} 的 token")
+        app.logger.info(f"[determine_mode_and_token] 配置模式：使用账号 {get_account_identifier(selected_account)} 的 token")
     else:
         g.use_config_token = False
         g.deepseek_token = caller_key
@@ -196,15 +211,11 @@ def determine_mode_and_token():
 
 def get_auth_headers():
     """返回 DeepSeek 请求所需的公共请求头"""
-    return {
-        **BASE_HEADERS,
-        "authorization": f"Bearer {g.deepseek_token}"
-    }
+    return { **BASE_HEADERS, "authorization": f"Bearer {g.deepseek_token}" }
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (6) 封装对话接口调用的重试机制
-# （对话接口失败时不切换账号，仅重试同一 token）
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def call_completion_endpoint(payload, headers, stream, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
@@ -217,15 +228,14 @@ def call_completion_endpoint(payload, headers, stream, max_attempts=3):
             attempts += 1
     return None
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (7) 创建会话 & 获取 PoW（重试时，配置模式下错误会切换账号；用户自带 token 模式下仅重试）
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def create_session(max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         headers = get_auth_headers()
-        resp = requests.post(DEEPSEEK_CREATE_SESSION_URL, headers=headers,
-                             json={"agent": "chat"})
+        resp = requests.post(DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"})
         try:
             data = resp.json()
         except Exception as e:
@@ -239,18 +249,18 @@ def create_session(max_attempts=3):
             code = data.get("code")
             app.logger.warning(f"[create_session] 创建会话失败, code={code}, msg={data.get('msg')}")
             if g.use_config_token:
-                current_email = g.account.get("email")
+                current_id = get_account_identifier(g.account)
                 if not hasattr(g, 'tried_accounts'):
                     g.tried_accounts = []
-                if current_email not in g.tried_accounts:
-                    g.tried_accounts.append(current_email)
+                if current_id not in g.tried_accounts:
+                    g.tried_accounts.append(current_id)
                 new_account = choose_new_account(g.tried_accounts)
                 if new_account is None:
                     break
                 try:
                     login_deepseek_via_account(new_account)
                 except Exception as e:
-                    app.logger.error(f"[create_session] 账号 {new_account.get('email')} 登录失败：{e}")
+                    app.logger.error(f"[create_session] 账号 {get_account_identifier(new_account)} 登录失败：{e}")
                     attempts += 1
                     continue
                 g.account = new_account
@@ -258,27 +268,19 @@ def create_session(max_attempts=3):
             else:
                 attempts += 1
                 continue
-            attempts += 1
+        attempts += 1
     return None
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (7.1) 使用 WASM 模块计算 PoW 答案的辅助函数
-# -------------------------------------------------------------------
-def compute_pow_answer(algorithm: str,
-                       challenge_str: str,
-                       salt: str,
-                       difficulty: int,
-                       expire_at: int,
-                       signature: str,
-                       target_path: str,
-                       wasm_path: str) -> int:
-    """
-    使用 WASM 模块计算 DeepSeekHash 答案（answer）。
+# ----------------------------------------------------------------------
+def compute_pow_answer(algorithm: str, challenge_str: str, salt: str, difficulty: int, expire_at: int, signature: str, target_path: str, wasm_path: str) -> int:
+    """使用 WASM 模块计算 DeepSeekHash 答案（answer）。
     根据 JS 逻辑：
-      - 拼接前缀： "{salt}_{expire_at}_"
-      - 将 challenge 与前缀写入 wasm 内存后调用 wasm_solve 进行求解，
-      - 从 wasm 内存中读取状态与求解结果，
-      - 若状态非 0，则返回整数形式的答案，否则返回 None。
+    - 拼接前缀： "{salt}{expire_at}"
+    - 将 challenge 与前缀写入 wasm 内存后调用 wasm_solve 进行求解，
+    - 从 wasm 内存中读取状态与求解结果，
+    - 若状态非 0，则返回整数形式的答案，否则返回 None。
     """
     if algorithm != "DeepSeekHashV1":
         raise ValueError(f"不支持的算法：{algorithm}")
@@ -345,15 +347,14 @@ def compute_pow_answer(algorithm: str,
         return None
     return int(value)
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (7.2) 获取 PoW 响应，融合计算 answer 逻辑
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def get_pow_response(max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         headers = get_auth_headers()
-        resp = requests.post(DEEPSEEK_CREATE_POW_URL, headers=headers,
-                             json={"target_path": "/api/v0/chat/completion"})
+        resp = requests.post(DEEPSEEK_CREATE_POW_URL, headers=headers, json={"target_path": "/api/v0/chat/completion"})
         try:
             data = resp.json()
         except Exception as e:
@@ -364,14 +365,16 @@ def get_pow_response(max_attempts=3):
             difficulty = challenge.get("difficulty", 144000)
             expire_at = challenge.get("expire_at", 1680000000)
             try:
-                answer = compute_pow_answer(challenge["algorithm"],
-                                            challenge["challenge"],
-                                            challenge["salt"],
-                                            difficulty,
-                                            expire_at,
-                                            challenge["signature"],
-                                            challenge["target_path"],
-                                            WASM_PATH)
+                answer = compute_pow_answer(
+                    challenge["algorithm"],
+                    challenge["challenge"],
+                    challenge["salt"],
+                    difficulty,
+                    expire_at,
+                    challenge["signature"],
+                    challenge["target_path"],
+                    WASM_PATH
+                )
             except Exception as e:
                 app.logger.error(f"[get_pow_response] PoW 答案计算异常: {e}")
                 answer = None
@@ -388,7 +391,6 @@ def get_pow_response(max_attempts=3):
                 "signature": challenge["signature"],
                 "target_path": challenge["target_path"]
             }
-            # 生成的 JSON 去除空格与换行：separators=(',', ':')
             pow_str = json.dumps(pow_dict, separators=(',', ':'), ensure_ascii=False)
             encoded = base64.b64encode(pow_str.encode("utf-8")).decode("utf-8").rstrip("=")
             return encoded
@@ -396,18 +398,18 @@ def get_pow_response(max_attempts=3):
             code = data.get("code")
             app.logger.warning(f"[get_pow_response] 获取 PoW 失败, code={code}, msg={data.get('msg')}")
             if g.use_config_token:
-                current_email = g.account.get("email")
+                current_id = get_account_identifier(g.account)
                 if not hasattr(g, 'tried_accounts'):
                     g.tried_accounts = []
-                if current_email not in g.tried_accounts:
-                    g.tried_accounts.append(current_email)
+                if current_id not in g.tried_accounts:
+                    g.tried_accounts.append(current_id)
                 new_account = choose_new_account(g.tried_accounts)
                 if new_account is None:
                     break
                 try:
                     login_deepseek_via_account(new_account)
                 except Exception as e:
-                    app.logger.error(f"[get_pow_response] 账号 {new_account.get('email')} 登录失败：{e}")
+                    app.logger.error(f"[get_pow_response] 账号 {get_account_identifier(new_account)} 登录失败：{e}")
                     attempts += 1
                     continue
                 g.account = new_account
@@ -418,9 +420,9 @@ def get_pow_response(max_attempts=3):
             attempts += 1
     return None
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (8) 路由：/v1/models（模拟 OpenAI 模型列表）
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 @app.route("/v1/models", methods=["GET"])
 def list_models():
     app.logger.info("[list_models] 用户请求 /v1/models")
@@ -454,22 +456,18 @@ def list_models():
             "permission": []
         }
     ]
-    data = {
-        "object": "list",
-        "data": models_list
-    }
+    data = {"object": "list", "data": models_list}
     return jsonify(data), 200
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (新增) 消息预处理函数，将多轮对话合并成最终 prompt
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def messages_prepare(messages: list) -> str:
-    """
-    处理消息列表，合并连续相同角色的消息，并添加角色标签：
-      - 对于 assistant 消息，加上 <｜Assistant｜> 前缀及 <｜end▁of▁sentence｜> 结束标签；
-      - 对于 user/system 消息（除第一条外）加上 <｜User｜> 前缀；
-      - 如果消息 content 为数组，则提取其中 type 为 "text" 的部分；
-      - 最后移除 markdown 图片格式的内容。
+    """处理消息列表，合并连续相同角色的消息，并添加角色标签：
+    - 对于 assistant 消息，加上 <｜Assistant｜> 前缀及 <｜end▁of▁sentence｜> 结束标签；
+    - 对于 user/system 消息（除第一条外）加上 <｜User｜> 前缀；
+    - 如果消息 content 为数组，则提取其中 type 为 "text" 的部分；
+    - 最后移除 markdown 图片格式的内容。
     """
     processed = []
     for m in messages:
@@ -505,13 +503,13 @@ def messages_prepare(messages: list) -> str:
         else:
             parts.append(text)
     final_prompt = "".join(parts)
-    # 移除 markdown 图片格式：![...](...)
-    final_prompt = re.sub(r"!.+.+", "", final_prompt)
+    # 移除 markdown 图片格式：
+    final_prompt = re.sub(r"!", "", final_prompt)
     return final_prompt
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (10) 路由：/v1/chat/completions
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 @app.route("/v1/chat/completions", methods=["POST"])
 def chat_completions():
     mode_resp = determine_mode_and_token()
@@ -520,9 +518,9 @@ def chat_completions():
 
     # 如果使用配置模式，检查账号是否正忙；如果忙则尝试切换账号
     if g.use_config_token:
-        account_email = g.account.get("email")
-        if account_email in active_accounts:
-            g.tried_accounts.append(account_email)
+        account_id = get_account_identifier(g.account)
+        if account_id in active_accounts:
+            g.tried_accounts.append(account_id)
             new_account = choose_new_account(g.tried_accounts)
             if new_account is None:
                 return jsonify({"error": "All accounts are busy."}), 503
@@ -532,8 +530,8 @@ def chat_completions():
                 return jsonify({"error": "Account login failed."}), 500
             g.account = new_account
             g.deepseek_token = new_account.get("token")
-            account_email = new_account.get("email")
-        active_accounts.add(account_email)
+            account_id = get_account_identifier(new_account)
+        active_accounts.add(account_id)
     try:
         req_data = request.json or {}
         app.logger.info(f"[chat_completions] 收到请求: {req_data}")
@@ -592,11 +590,9 @@ def chat_completions():
                                 status=deepseek_resp.status_code,
                                 mimetype="application/json")
             def sse_stream():
-                # 初始化累积变量，用于计算 token 使用
                 final_text = ""
                 final_thinking = ""
                 first_chunk_sent = False
-                # 注意：这里不再使用 decode_unicode=True，而是手动解码
                 for raw_line in deepseek_resp.iter_lines():
                     try:
                         line = raw_line.decode("utf-8")
@@ -607,9 +603,7 @@ def chat_completions():
                         continue
                     if line.startswith("data:"):
                         data_str = line[5:].strip()
-                        # 如果收到完成标志，则在发送结束前计算 token 使用并发送包含 usage 的结束 chunk
                         if data_str == "[DONE]":
-                            # 计算 token 数：prompt 来自前端构造的 final_prompt；回复为累积的 final_text
                             prompt_tokens = len(tokenizer.encode(final_prompt))
                             completion_tokens = len(tokenizer.encode(final_text))
                             usage = {
@@ -641,7 +635,6 @@ def chat_completions():
                             delta = choice.get("delta", {})
                             ctype = delta.get("type")
                             ctext = delta.get("content", "")
-                            # 累加文本内容以便后续计算 token 数
                             if ctype == "thinking":
                                 if thinking_enabled:
                                     final_thinking += ctext
@@ -667,19 +660,16 @@ def chat_completions():
                                 "choices": new_choices
                             }
                             yield f"data: {json.dumps(out_chunk, ensure_ascii=False)}\n\n"
-                # 退出时确保释放账号忙状态
                 if g.use_config_token:
-                    active_accounts.discard(g.account.get("email"))
+                    active_accounts.discard(get_account_identifier(g.account))
             return Response(stream_with_context(sse_stream()), content_type="text/event-stream")
         else:
-            # 非流式响应
             if deepseek_resp.status_code != 200:
                 return Response(deepseek_resp.content,
                                 status=deepseek_resp.status_code,
                                 mimetype="application/json")
             think_list = []
             text_list = []
-            # 同样地，手动解码响应行
             for raw_line in deepseek_resp.iter_lines():
                 try:
                     line = raw_line.decode("utf-8")
@@ -735,17 +725,17 @@ def chat_completions():
             return jsonify(result), 200
     finally:
         if g.use_config_token:
-            active_accounts.discard(g.account.get("email"))
-            
-# -------------------------------------------------------------------
+            active_accounts.discard(get_account_identifier(g.account))
+
+# ----------------------------------------------------------------------
 # (10) 路由：/
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 @app.route("/")
 def index():
     return render_template("welcome.html")
 
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # (11) 启动 Flask 应用
-# -------------------------------------------------------------------
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, debug=False)
