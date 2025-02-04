@@ -324,7 +324,7 @@ keepalive_timeout 120;
 
 ## Star History
 
-![Star History Chart](https://api.star-history.com/svg?repos=iidamie/deepseek2api&type=Date)](https://star-history.com/#iidamie/deepseek2api&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=iidamie/deepseek2api&type=Date)](https://star-history.com/#iidamie/deepseek2api&Date)
 
 ## 鸣谢
 
