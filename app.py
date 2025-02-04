@@ -133,7 +133,7 @@ def login_deepseek_via_account(account):
             "mobile": mobile,
             "area_code": None,
             "password": password,
-            "device_id": "deepseek_to_api,
+            "device_id": "deepseek_to_api",
             "os": "android"
         }
     
