@@ -134,7 +134,7 @@ pip install -r requirements.txt
 启动服务
 
 ```shell
-python app.py
+python server.py
 ```
 
 ## 接口列表
