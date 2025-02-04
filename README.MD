@@ -15,6 +15,7 @@
 * [接入准备](#接入准备)
   * [多账号接入](#多账号接入)
 * [Docker部署](#Docker部署)
+  * [Docker-compose部署](#Docker-compose部署)
 * [原生部署](#原生部署)
 * [接口列表](#接口列表)
   * [模型列表](#模型列表)
@@ -91,6 +92,43 @@
 
 ```shell
 docker run -d -p 5001:5001 -v "$(pwd)/config.json:/app/config.json" --name deepseek2api iidamie/deepseek2api:latest
+```
+
+查看服务实时日志
+
+```shell
+docker logs -f deepseek2api
+```
+
+重启服务
+
+```shell
+docker restart deepseek2api
+```
+
+停止服务
+
+```shell
+docker stop deepseek2api
+```
+
+### Docker-compose部署
+
+拉取该项目
+```shell
+git clone https://github.com/iidamie/deepseek2api.git
+cd deepseek2api
+```
+配置 config.json
+
+在当前目录下，修改 config.json 文件
+ * keys - 你的 API 鉴权密钥
+ * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+
+启动服务
+
+```shell
+docker-compose up -d
 ```
 
 查看服务实时日志
