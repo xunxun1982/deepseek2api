@@ -15,7 +15,7 @@
 * [接入准备](#接入准备)
   * [多账号接入](#多账号接入)
 * [Docker部署](#Docker部署)
-  * [Docker-compose部署](#Docker-compose部署)
+* [Docker-compose部署](#Docker-compose部署)
 * [原生部署](#原生部署)
 * [接口列表](#接口列表)
   * [模型列表](#模型列表)
@@ -112,7 +112,7 @@ docker restart deepseek2api
 docker stop deepseek2api
 ```
 
-### Docker-compose部署
+## Docker-compose部署
 
 拉取该项目
 ```shell
