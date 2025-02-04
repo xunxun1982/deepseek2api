@@ -5,7 +5,6 @@ import time
 import logging
 from curl_cffi import requests
 import random
-import http.client as http_client
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify, g
 import os
 import struct
@@ -99,6 +98,25 @@ BASE_HEADERS = {
 WASM_PATH = "sha3_wasm_bg.7b9ca65ddd.wasm"
 
 # ----------------------------------------------------------------------
+# 全局缓存：编译好的 WASM 模块，避免重复加载
+# ----------------------------------------------------------------------
+WASM_MODULE = None
+
+def get_wasm_module() -> Module:
+    """加载或返回已缓存的 WASM 模块"""
+    global WASM_MODULE
+    if WASM_MODULE is None:
+        try:
+            with open(WASM_PATH, "rb") as f:
+                wasm_bytes = f.read()
+            store = Store()
+            WASM_MODULE = Module(store.engine, wasm_bytes)
+            app.logger.info("[get_wasm_module] WASM 模块加载成功")
+        except Exception as e:
+            raise RuntimeError(f"加载或编译 wasm 文件失败: {WASM_PATH}, 错误: {e}")
+    return WASM_MODULE
+
+# ----------------------------------------------------------------------
 # 辅助函数：获取账号唯一标识（优先 email，否则 mobile）
 # ----------------------------------------------------------------------
 def get_account_identifier(account):
@@ -137,7 +155,8 @@ def login_deepseek_via_account(account):
             "os": "android"
         }
     
-    resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
+    # 增加 timeout 参数，防止请求阻塞过久
+    resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload, timeout=30)
     app.logger.debug(f"[login_deepseek_via_account] 状态码: {resp.status_code}")
     app.logger.debug(f"[login_deepseek_via_account] 响应体: {resp.text}")
     resp.raise_for_status()
@@ -219,11 +238,18 @@ def get_auth_headers():
 def call_completion_endpoint(payload, headers, stream, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
-        deepseek_resp = requests.post(DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True)
+        try:
+            deepseek_resp = requests.post(DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=stream)
+        except Exception as e:
+            app.logger.warning(f"[call_completion_endpoint] 请求异常: {e}")
+            time.sleep(1)
+            attempts += 1
+            continue
         if deepseek_resp.status_code == 200:
             return deepseek_resp
         else:
             app.logger.warning(f"[call_completion_endpoint] 调用对话接口失败, 状态码: {deepseek_resp.status_code}")
+            deepseek_resp.close()
             time.sleep(1)
             attempts += 1
     return None
@@ -235,7 +261,12 @@ def create_session(max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         headers = get_auth_headers()
-        resp = requests.post(DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"})
+        try:
+            resp = requests.post(DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"}, timeout=30)
+        except Exception as e:
+            app.logger.error(f"[create_session] 请求异常: {e}")
+            attempts += 1
+            continue
         try:
             data = resp.json()
         except Exception as e:
@@ -244,10 +275,12 @@ def create_session(max_attempts=3):
         if resp.status_code == 200 and data.get("code") == 0:
             session_id = data["data"]["biz_data"]["id"]
             app.logger.info(f"[create_session] 新会话 chat_session_id={session_id}")
+            resp.close()
             return session_id
         else:
             code = data.get("code")
             app.logger.warning(f"[create_session] 创建会话失败, code={code}, msg={data.get('msg')}")
+            resp.close()
             if g.use_config_token:
                 current_id = get_account_identifier(g.account)
                 if not hasattr(g, 'tried_accounts'):
@@ -274,28 +307,25 @@ def create_session(max_attempts=3):
 # ----------------------------------------------------------------------
 # (7.1) 使用 WASM 模块计算 PoW 答案的辅助函数
 # ----------------------------------------------------------------------
-def compute_pow_answer(algorithm: str, challenge_str: str, salt: str, difficulty: int, expire_at: int, signature: str, target_path: str, wasm_path: str) -> int:
+def compute_pow_answer(algorithm: str, challenge_str: str, salt: str, difficulty: int,
+                       expire_at: int, signature: str, target_path: str, wasm_path: str) -> int:
     """使用 WASM 模块计算 DeepSeekHash 答案（answer）。
+
     根据 JS 逻辑：
-    - 拼接前缀： "{salt}{expire_at}"
-    - 将 challenge 与前缀写入 wasm 内存后调用 wasm_solve 进行求解，
-    - 从 wasm 内存中读取状态与求解结果，
-    - 若状态非 0，则返回整数形式的答案，否则返回 None。
+      - 拼接前缀： "{salt}_{expire_at}_"
+      - 将 challenge 与前缀写入 WASM 内存后调用 wasm_solve 进行求解，
+      - 从 WASM 内存中读取状态与求解结果，
+      - 若状态非 0，则返回整数形式的答案，否则返回 None。
     """
     if algorithm != "DeepSeekHashV1":
         raise ValueError(f"不支持的算法：{algorithm}")
 
     prefix = f"{salt}_{expire_at}_"
 
-    # --- 加载 wasm 模块 ---
+    # 为每次调用创建新的 Store，重用全局缓存的 WASM_MODULE
     store = Store()
     linker = Linker(store.engine)
-    try:
-        with open(wasm_path, "rb") as f:
-            wasm_bytes = f.read()
-    except Exception as e:
-        raise RuntimeError(f"加载 wasm 文件失败: {wasm_path}, 错误: {e}")
-    module = Module(store.engine, wasm_bytes)
+    module = get_wasm_module()  # 使用缓存的模块
     instance = linker.instantiate(store, module)
     exports = instance.exports(store)
     try:
@@ -354,7 +384,12 @@ def get_pow_response(max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         headers = get_auth_headers()
-        resp = requests.post(DEEPSEEK_CREATE_POW_URL, headers=headers, json={"target_path": "/api/v0/chat/completion"})
+        try:
+            resp = requests.post(DEEPSEEK_CREATE_POW_URL, headers=headers, json={"target_path": "/api/v0/chat/completion"}, timeout=30)
+        except Exception as e:
+            app.logger.error(f"[get_pow_response] 请求异常: {e}")
+            attempts += 1
+            continue
         try:
             data = resp.json()
         except Exception as e:
@@ -380,6 +415,7 @@ def get_pow_response(max_attempts=3):
                 answer = None
             if answer is None:
                 app.logger.warning("[get_pow_response] PoW 答案计算失败，重试中...")
+                resp.close()
                 attempts += 1
                 continue
 
@@ -393,10 +429,12 @@ def get_pow_response(max_attempts=3):
             }
             pow_str = json.dumps(pow_dict, separators=(',', ':'), ensure_ascii=False)
             encoded = base64.b64encode(pow_str.encode("utf-8")).decode("utf-8").rstrip("=")
+            resp.close()
             return encoded
         else:
             code = data.get("code")
             app.logger.warning(f"[get_pow_response] 获取 PoW 失败, code={code}, msg={data.get('msg')}")
+            resp.close()
             if g.use_config_token:
                 current_id = get_account_identifier(g.account)
                 if not hasattr(g, 'tried_accounts'):
@@ -583,118 +621,125 @@ def chat_completions():
         created_time = int(time.time())
         completion_id = f"{session_id}"
 
-        # 如果请求为流式响应，则按 SSE 格式返回事件流
+        # 流式响应：SSE 格式返回事件流
         if bool(req_data.get("stream", False)):
             if deepseek_resp.status_code != 200:
+                deepseek_resp.close()
                 return Response(deepseek_resp.content,
                                 status=deepseek_resp.status_code,
                                 mimetype="application/json")
+
             def sse_stream():
-                final_text = ""
-                final_thinking = ""
-                first_chunk_sent = False
-                for raw_line in deepseek_resp.iter_lines():
+                try:
+                    final_text = ""
+                    final_thinking = ""
+                    first_chunk_sent = False
+                    for raw_line in deepseek_resp.iter_lines(chunk_size=512):
+                        try:
+                            line = raw_line.decode("utf-8")
+                        except Exception as e:
+                            app.logger.warning(f"[sse_stream] 解码失败: {e}")
+                            continue
+                        if not line:
+                            continue
+                        if line.startswith("data:"):
+                            data_str = line[5:].strip()
+                            if data_str == "[DONE]":
+                                prompt_tokens = len(tokenizer.encode(final_prompt))
+                                completion_tokens = len(tokenizer.encode(final_text))
+                                usage = {
+                                    "prompt_tokens": prompt_tokens,
+                                    "completion_tokens": completion_tokens,
+                                    "total_tokens": prompt_tokens + completion_tokens
+                                }
+                                finish_chunk = {
+                                    "id": completion_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_time,
+                                    "model": model,
+                                    "choices": [
+                                        {"delta": {}, "index": 0, "finish_reason": "stop"}
+                                    ],
+                                    "usage": usage
+                                }
+                                yield f"data: {json.dumps(finish_chunk, ensure_ascii=False)}\n\n"
+                                yield "data: [DONE]\n\n"
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                                app.logger.debug(f"[sse_stream] 解析到 chunk: {chunk}")
+                            except Exception as e:
+                                app.logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
+                                continue
+                            new_choices = []
+                            for choice in chunk.get("choices", []):
+                                delta = choice.get("delta", {})
+                                ctype = delta.get("type")
+                                ctext = delta.get("content", "")
+                                if ctype == "thinking":
+                                    if thinking_enabled:
+                                        final_thinking += ctext
+                                elif ctype == "text":
+                                    final_text += ctext
+                                delta_obj = {}
+                                if not first_chunk_sent:
+                                    delta_obj["role"] = "assistant"
+                                    first_chunk_sent = True
+                                if ctype == "thinking":
+                                    if thinking_enabled:
+                                        delta_obj["reasoning_content"] = ctext
+                                elif ctype == "text":
+                                    delta_obj["content"] = ctext
+                                if delta_obj:
+                                    new_choices.append({"delta": delta_obj, "index": choice.get("index", 0)})
+                            if new_choices:
+                                out_chunk = {
+                                    "id": completion_id,
+                                    "object": "chat.completion.chunk",
+                                    "created": created_time,
+                                    "model": model,
+                                    "choices": new_choices
+                                }
+                                yield f"data: {json.dumps(out_chunk, ensure_ascii=False)}\n\n"
+                except Exception as e:
+                    app.logger.error(f"[sse_stream] 异常: {e}")
+                finally:
+                    deepseek_resp.close()
+                    if g.use_config_token:
+                        active_accounts.discard(get_account_identifier(g.account))
+            return Response(stream_with_context(sse_stream()), content_type="text/event-stream")
+        else:
+            # 非流式响应处理
+            think_list = []
+            text_list = []
+            try:
+                for raw_line in deepseek_resp.iter_lines(chunk_size=512):
                     try:
                         line = raw_line.decode("utf-8")
                     except Exception as e:
-                        app.logger.warning(f"[sse_stream] 解码失败: {e}")
+                        app.logger.warning(f"[chat_completions] 解码失败: {e}")
                         continue
                     if not line:
                         continue
                     if line.startswith("data:"):
                         data_str = line[5:].strip()
                         if data_str == "[DONE]":
-                            prompt_tokens = len(tokenizer.encode(final_prompt))
-                            completion_tokens = len(tokenizer.encode(final_text))
-                            usage = {
-                                "prompt_tokens": prompt_tokens,
-                                "completion_tokens": completion_tokens,
-                                "total_tokens": prompt_tokens + completion_tokens
-                            }
-                            finish_chunk = {
-                                "id": completion_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model,
-                                "choices": [
-                                    {"delta": {}, "index": 0, "finish_reason": "stop"}
-                                ],
-                                "usage": usage
-                            }
-                            yield f"data: {json.dumps(finish_chunk, ensure_ascii=False)}\n\n"
-                            yield "data: [DONE]\n\n"
                             break
                         try:
                             chunk = json.loads(data_str)
-                            app.logger.debug(f"[sse_stream] 解析到 chunk: {chunk}")
+                            app.logger.debug(f"[chat_completions] 非流式 chunk: {chunk}")
                         except Exception as e:
-                            app.logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
+                            app.logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
                             continue
-                        new_choices = []
                         for choice in chunk.get("choices", []):
                             delta = choice.get("delta", {})
                             ctype = delta.get("type")
-                            ctext = delta.get("content", "")
-                            if ctype == "thinking":
-                                if thinking_enabled:
-                                    final_thinking += ctext
+                            if ctype == "thinking" and thinking_enabled:
+                                think_list.append(delta.get("content", ""))
                             elif ctype == "text":
-                                final_text += ctext
-                            delta_obj = {}
-                            if not first_chunk_sent:
-                                delta_obj["role"] = "assistant"
-                                first_chunk_sent = True
-                            if ctype == "thinking":
-                                if thinking_enabled:
-                                    delta_obj["reasoning_content"] = ctext
-                            elif ctype == "text":
-                                delta_obj["content"] = ctext
-                            if delta_obj:
-                                new_choices.append({"delta": delta_obj, "index": choice.get("index", 0)})
-                        if new_choices:
-                            out_chunk = {
-                                "id": completion_id,
-                                "object": "chat.completion.chunk",
-                                "created": created_time,
-                                "model": model,
-                                "choices": new_choices
-                            }
-                            yield f"data: {json.dumps(out_chunk, ensure_ascii=False)}\n\n"
-                if g.use_config_token:
-                    active_accounts.discard(get_account_identifier(g.account))
-            return Response(stream_with_context(sse_stream()), content_type="text/event-stream")
-        else:
-            if deepseek_resp.status_code != 200:
-                return Response(deepseek_resp.content,
-                                status=deepseek_resp.status_code,
-                                mimetype="application/json")
-            think_list = []
-            text_list = []
-            for raw_line in deepseek_resp.iter_lines():
-                try:
-                    line = raw_line.decode("utf-8")
-                except Exception as e:
-                    app.logger.warning(f"[chat_completions] 解码失败: {e}")
-                    continue
-                if not line:
-                    continue
-                if line.startswith("data:"):
-                    data_str = line[5:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        app.logger.debug(f"[chat_completions] 非流式 chunk: {chunk}")
-                    except Exception as e:
-                        app.logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
-                        continue
-                    for choice in chunk.get("choices", []):
-                        delta = choice.get("delta", {})
-                        ctype = delta.get("type")
-                        if ctype == "thinking" and thinking_enabled:
-                            think_list.append(delta.get("content", ""))
-                        elif ctype == "text":
-                            text_list.append(delta.get("content", ""))
+                                text_list.append(delta.get("content", ""))
+            finally:
+                deepseek_resp.close()
             final_reasoning = "".join(think_list)
             final_content = "".join(text_list)
             prompt_tokens = len(tokenizer.encode(final_prompt))
@@ -728,14 +773,14 @@ def chat_completions():
             active_accounts.discard(get_account_identifier(g.account))
 
 # ----------------------------------------------------------------------
-# (10) 路由：/
+# (11) 路由：/
 # ----------------------------------------------------------------------
 @app.route("/")
 def index():
     return render_template("welcome.html")
 
 # ----------------------------------------------------------------------
-# (11) 启动 Flask 应用
+# 启动 Flask 应用（直接使用 Flask 内置服务器）
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, debug=False)

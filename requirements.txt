@@ -1,5 +1,4 @@
 flask
-gunicorn
 wasmtime
 curl_cffi
 transformers
