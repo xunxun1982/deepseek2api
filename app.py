@@ -98,25 +98,6 @@ BASE_HEADERS = {
 WASM_PATH = "sha3_wasm_bg.7b9ca65ddd.wasm"
 
 # ----------------------------------------------------------------------
-# 全局缓存：编译好的 WASM 模块，避免重复加载
-# ----------------------------------------------------------------------
-WASM_MODULE = None
-
-def get_wasm_module() -> Module:
-    """加载或返回已缓存的 WASM 模块"""
-    global WASM_MODULE
-    if WASM_MODULE is None:
-        try:
-            with open(WASM_PATH, "rb") as f:
-                wasm_bytes = f.read()
-            store = Store()
-            WASM_MODULE = Module(store.engine, wasm_bytes)
-            app.logger.info("[get_wasm_module] WASM 模块加载成功")
-        except Exception as e:
-            raise RuntimeError(f"加载或编译 wasm 文件失败: {WASM_PATH}, 错误: {e}")
-    return WASM_MODULE
-
-# ----------------------------------------------------------------------
 # 辅助函数：获取账号唯一标识（优先 email，否则 mobile）
 # ----------------------------------------------------------------------
 def get_account_identifier(account):
@@ -307,14 +288,20 @@ def create_session(max_attempts=3):
 # ----------------------------------------------------------------------
 # (7.1) 使用 WASM 模块计算 PoW 答案的辅助函数
 # ----------------------------------------------------------------------
-def compute_pow_answer(algorithm: str, challenge_str: str, salt: str, difficulty: int,
-                       expire_at: int, signature: str, target_path: str, wasm_path: str) -> int:
-    """使用 WASM 模块计算 DeepSeekHash 答案（answer）。
-
+def compute_pow_answer(algorithm: str,
+                       challenge_str: str,
+                       salt: str,
+                       difficulty: int,
+                       expire_at: int,
+                       signature: str,
+                       target_path: str,
+                       wasm_path: str) -> int:
+    """
+    使用 WASM 模块计算 DeepSeekHash 答案（answer）。
     根据 JS 逻辑：
       - 拼接前缀： "{salt}_{expire_at}_"
-      - 将 challenge 与前缀写入 WASM 内存后调用 wasm_solve 进行求解，
-      - 从 WASM 内存中读取状态与求解结果，
+      - 将 challenge 与前缀写入 wasm 内存后调用 wasm_solve 进行求解，
+      - 从 wasm 内存中读取状态与求解结果，
       - 若状态非 0，则返回整数形式的答案，否则返回 None。
     """
     if algorithm != "DeepSeekHashV1":
@@ -322,10 +309,15 @@ def compute_pow_answer(algorithm: str, challenge_str: str, salt: str, difficulty
 
     prefix = f"{salt}_{expire_at}_"
 
-    # 为每次调用创建新的 Store，重用全局缓存的 WASM_MODULE
+    # --- 加载 wasm 模块 ---
     store = Store()
     linker = Linker(store.engine)
-    module = get_wasm_module()  # 使用缓存的模块
+    try:
+        with open(wasm_path, "rb") as f:
+            wasm_bytes = f.read()
+    except Exception as e:
+        raise RuntimeError(f"加载 wasm 文件失败: {wasm_path}, 错误: {e}")
+    module = Module(store.engine, wasm_bytes)
     instance = linker.instantiate(store, module)
     exports = instance.exports(store)
     try:
