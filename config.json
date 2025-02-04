@@ -15,12 +15,12 @@
       "token": ""
     },
     {
-      "email": "example3@example.com",
+      "mobile": "12345678901",
       "password": "password3",
       "token": ""
     },
     {
-      "email": "example4@example.com",
+      "mobile": "12345678901",
       "password": "password4",
       "token": ""
     }
