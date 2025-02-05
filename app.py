@@ -581,7 +581,7 @@ def chat_completions():
 
         # 使用 messages_prepare 函数构造最终 prompt
         final_prompt = messages_prepare(messages)
-        app.logger.debug(f"[chat_completions] 最终 Prompt: {final_prompt}")
+        app.logger.info(f"[chat_completions] 最终 Prompt: {final_prompt}")
 
         session_id = create_session()
         if not session_id:
@@ -604,7 +604,7 @@ def chat_completions():
             "thinking_enabled": thinking_enabled,
             "search_enabled": False
         }
-        app.logger.debug(f"[chat_completions] -> {DEEPSEEK_COMPLETION_URL}, payload={payload}")
+        app.logger.info(f"[chat_completions] -> {DEEPSEEK_COMPLETION_URL}, payload={payload}")
 
         deepseek_resp = call_completion_endpoint(payload, headers, stream=bool(req_data.get("stream", False)), max_attempts=3)
         if not deepseek_resp:
@@ -659,7 +659,7 @@ def chat_completions():
                                 break
                             try:
                                 chunk = json.loads(data_str)
-                                app.logger.debug(f"[sse_stream] 解析到 chunk: {chunk}")
+                                app.logger.info(f"[sse_stream] 解析到 chunk: {chunk}")
                             except Exception as e:
                                 app.logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
                                 continue
@@ -719,7 +719,7 @@ def chat_completions():
                             break
                         try:
                             chunk = json.loads(data_str)
-                            app.logger.debug(f"[chat_completions] 非流式 chunk: {chunk}")
+                            app.logger.info(f"[chat_completions] 非流式 chunk: {chunk}")
                         except Exception as e:
                             app.logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
                             continue
