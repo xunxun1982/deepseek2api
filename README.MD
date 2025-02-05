@@ -158,6 +158,9 @@ docker stop deepseek2api
  * keys - 你的 API 鉴权密钥
  * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
 
+> [!WARNING]  
+> 一定要是私库，防止信息泄露！
+
 配置完后，返回 Vercel 控制台，重新部署即可
 
 ## 原生部署
