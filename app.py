@@ -138,8 +138,7 @@ def login_deepseek_via_account(account):
     
     # 增加 timeout 参数，防止请求阻塞过久
     resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload, timeout=30)
-    app.logger.debug(f"[login_deepseek_via_account] 状态码: {resp.status_code}")
-    app.logger.debug(f"[login_deepseek_via_account] 响应体: {resp.text}")
+    
     resp.raise_for_status()
     data = resp.json()
     if data.get("code") != 0:
@@ -581,7 +580,6 @@ def chat_completions():
 
         # 使用 messages_prepare 函数构造最终 prompt
         final_prompt = messages_prepare(messages)
-        app.logger.info(f"[chat_completions] 最终 Prompt: {final_prompt}")
 
         session_id = create_session()
         if not session_id:
