@@ -83,12 +83,12 @@ DEEPSEEK_COMPLETION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/completion"
 
 BASE_HEADERS = {
     'Host': "chat.deepseek.com",
-    'User-Agent': "DeepSeek/1.0.7 Android/34",
+    'User-Agent': "DeepSeek/1.0.9 Android/34",
     'Accept': "application/json",
     'Accept-Encoding': "gzip",
     'Content-Type': "application/json",
     'x-client-platform': "android",
-    'x-client-version': "1.0.7",
+    'x-client-version': "1.0.9",
     'x-client-locale': "zh_CN",
     'x-rangers-id': "7883327620434123524",
     'accept-charset': "UTF-8",
