@@ -457,21 +457,7 @@ def list_models():
     app.logger.info("[list_models] 用户请求 /v1/models")
     models_list = [
         {
-            "id": "DeepSeek-R1",
-            "object": "model",
-            "created": 1677610602,
-            "owned_by": "deepseek",
-            "permission": []
-        },
-        {
             "id": "deepseek-reasoner",
-            "object": "model",
-            "created": 1677610602,
-            "owned_by": "deepseek",
-            "permission": []
-        },
-        {
-            "id": "DeepSeek-V3",
             "object": "model",
             "created": 1677610602,
             "owned_by": "deepseek",
