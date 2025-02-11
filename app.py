@@ -6,7 +6,6 @@ import logging
 from curl_cffi import requests
 import random
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify, g
-from waitress import serve
 import os
 import struct
 import ctypes
@@ -757,7 +756,7 @@ def index():
     return render_template("welcome.html")
 
 # ----------------------------------------------------------------------
-# 启动 Flask 应用
+# 启动 Flask 应用（直接使用 Flask 内置服务器）
 # ----------------------------------------------------------------------
-if __name__ == '__main__':
-    serve(app, host='0.0.0.0', port=5001)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5001, debug=False)
