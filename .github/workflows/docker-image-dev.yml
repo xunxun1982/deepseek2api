@@ -5,6 +5,13 @@ on:
   push:
     branches:
       - dev
+    paths-ignore:
+      - 'README.MD'
+      - 'docker-compose.yml'
+      - '.github/**'
+      - 'vercel.json'
+      - '.gitignore'
+
 jobs:
   build-and-push-dev:
     runs-on: ubuntu-latest
