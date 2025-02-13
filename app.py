@@ -721,11 +721,11 @@ def chat_completions():
                                 # 如果是搜索启用状态且内容包含 citation 标记，进行格式转换
                                 if search_enabled and ctext.startswith("[citation:"):
                                     # 提取引用编号
-                                    cite_num = ctext.strip("[]").split(":")[1]
-                                    if cite_num in citation_map:
+                                    # cite_num = ctext.strip("[]").split(":")[1]
+                                    # if cite_num in citation_map:
                                         # 转换为新格式
                                         # ctext = f"[[{cite_num}]]({citation_map[cite_num]})"
-                                        ctext = ""
+                                    ctext = ""
                                 
                                 if ctype == "thinking":
                                     if thinking_enabled:
@@ -811,11 +811,11 @@ def chat_completions():
                                     # 如果是搜索启用状态且内容包含 citation 标记，进行格式转换
                                     if search_enabled and ctext.startswith("[citation:"):
                                         # 提取引用编号
-                                        cite_num = ctext.strip("[]").split(":")[1]
-                                        if cite_num in citation_map:
+                                        # cite_num = ctext.strip("[]").split(":")[1]
+                                        # if cite_num in citation_map:
                                             # 转换为新格式
                                             # ctext = f"[[{cite_num}]]({citation_map[cite_num]})"
-                                            ctext = ""
+                                        ctext = ""
                                     
                                     if ctype == "thinking" and thinking_enabled:
                                         think_list.append(ctext)
