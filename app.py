@@ -815,7 +815,7 @@ def chat_completions():
                                         if cite_num in citation_map:
                                             # 转换为新格式
                                             # ctext = f"[[{cite_num}]]({citation_map[cite_num]})"
-                                        ctext = """
+                                            ctext = """
                                     
                                     if ctype == "thinking" and thinking_enabled:
                                         think_list.append(ctext)
