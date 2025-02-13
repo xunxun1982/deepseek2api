@@ -13,6 +13,8 @@ import ctypes
 from wasmtime import Store, Module, Linker
 import re
 import transformers
+import threading
+import queue
 
 # -------------------------- 初始化 tokenizer --------------------------
 chat_tokenizer_dir = "./"  # 请确保目录下有正确的 tokenizer 配置文件或模型文件
@@ -138,8 +140,7 @@ def login_deepseek_via_account(account):
         }
     
     # 增加 timeout 参数，防止请求阻塞过久
-    resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload, timeout=30)
-    
+    resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
     resp.raise_for_status()
     data = resp.json()
     if data.get("code") != 0:
@@ -458,6 +459,13 @@ def list_models():
     app.logger.info("[list_models] 用户请求 /v1/models")
     models_list = [
         {
+            "id": "deepseek-chat",
+            "object": "model",
+            "created": 1677610602,
+            "owned_by": "deepseek",
+            "permission": []
+        },
+        {
             "id": "deepseek-reasoner",
             "object": "model",
             "created": 1677610602,
@@ -465,7 +473,14 @@ def list_models():
             "permission": []
         },
         {
-            "id": "deepseek-chat",
+            "id": "deepseek-chat-search",
+            "object": "model",
+            "created": 1677610602,
+            "owned_by": "deepseek",
+            "permission": []
+        },
+        {
+            "id": "deepseek-reasoner-search",
             "object": "model",
             "created": 1677610602,
             "owned_by": "deepseek",
@@ -523,6 +538,9 @@ def messages_prepare(messages: list) -> str:
     final_prompt = re.sub(r"!", "", final_prompt)
     return final_prompt
 
+# 添加保活超时配置（5秒）
+KEEP_ALIVE_TIMEOUT = 5
+
 # ----------------------------------------------------------------------
 # (10) 路由：/v1/chat/completions
 # ----------------------------------------------------------------------
@@ -556,12 +574,20 @@ def chat_completions():
         if not model or not messages:
             return jsonify({"error": "Request must include 'model' and 'messages'."}), 400
 
-        # 判断是否启用“思考”功能（这里根据模型名称判断）
+        # 判断是否启用“思考”或”思考“功能（这里根据模型名称判断）
         model_lower = model.lower()
         if model_lower in ["deepseek-v3", "deepseek-chat"]:
             thinking_enabled = False
+            search_enabled = False
         elif model_lower in ["deepseek-r1", "deepseek-reasoner"]:
             thinking_enabled = True
+            search_enabled = False
+        elif model_lower in ["deepseek-v3-search", "deepseek-chat-search"]:
+            thinking_enabled = False
+            search_enabled = True
+        elif model_lower in ["deepseek-r1-search", "deepseek-reasoner-search"]:
+            thinking_enabled = True
+            search_enabled = True
         else:
             return jsonify({"error": f"Model '{model}' is not available."}), 503
 
@@ -587,7 +613,7 @@ def chat_completions():
             "prompt": final_prompt,
             "ref_file_ids": [],
             "thinking_enabled": thinking_enabled,
-            "search_enabled": False
+            "search_enabled": search_enabled
         }
         app.logger.info(f"[chat_completions] -> {DEEPSEEK_COMPLETION_URL}, payload={payload}")
 
@@ -611,17 +637,51 @@ def chat_completions():
                     final_text = ""
                     final_thinking = ""
                     first_chunk_sent = False
-                    for raw_line in deepseek_resp.iter_lines(chunk_size=512):
+                    result_queue = queue.Queue()
+                    last_send_time = time.time()
+
+                    def process_data():
                         try:
-                            line = raw_line.decode("utf-8")
-                        except Exception as e:
-                            app.logger.warning(f"[sse_stream] 解码失败: {e}")
+                            for raw_line in deepseek_resp.iter_lines(chunk_size=512):
+                                try:
+                                    line = raw_line.decode("utf-8")
+                                except Exception as e:
+                                    app.logger.warning(f"[sse_stream] 解码失败: {e}")
+                                    continue
+
+                                if not line:
+                                    continue
+
+                                if line.startswith("data:"):
+                                    data_str = line[5:].strip()
+                                    if data_str == "[DONE]":
+                                        result_queue.put(None)  # 结束信号
+                                        break
+
+                                    try:
+                                        chunk = json.loads(data_str)
+                                        result_queue.put(chunk)  # 将数据放入队列
+                                    except Exception as e:
+                                        app.logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
+                        finally:
+                            deepseek_resp.close()
+
+                    # 启动数据处理线程
+                    process_thread = threading.Thread(target=process_data)
+                    process_thread.start()
+
+                    while True:
+                        current_time = time.time()
+                        if current_time - last_send_time >= KEEP_ALIVE_TIMEOUT:
+                            app.logger.info("[sse_stream] 发送保活信号")
+                            yield ": keep-alive\n\n"
+                            last_send_time = current_time
                             continue
-                        if not line:
-                            continue
-                        if line.startswith("data:"):
-                            data_str = line[5:].strip()
-                            if data_str == "[DONE]":
+
+                        try:
+                            chunk = result_queue.get(timeout=0.1)  # 100ms 超时
+                            if chunk is None:  # 结束信号
+                                # 发送最终的统计信息
                                 prompt_tokens = len(tokenizer.encode(final_prompt))
                                 completion_tokens = len(tokenizer.encode(final_text))
                                 usage = {
@@ -641,13 +701,10 @@ def chat_completions():
                                 }
                                 yield f"data: {json.dumps(finish_chunk, ensure_ascii=False)}\n\n"
                                 yield "data: [DONE]\n\n"
+                                last_send_time = current_time
                                 break
-                            try:
-                                chunk = json.loads(data_str)
-                                app.logger.info(f"[sse_stream] 解析到 chunk: {chunk}")
-                            except Exception as e:
-                                app.logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
-                                continue
+
+                            # 处理数据块
                             new_choices = []
                             for choice in chunk.get("choices", []):
                                 delta = choice.get("delta", {})
@@ -658,6 +715,7 @@ def chat_completions():
                                         final_thinking += ctext
                                 elif ctype == "text":
                                     final_text += ctext
+                                
                                 delta_obj = {}
                                 if not first_chunk_sent:
                                     delta_obj["role"] = "assistant"
@@ -669,6 +727,7 @@ def chat_completions():
                                     delta_obj["content"] = ctext
                                 if delta_obj:
                                     new_choices.append({"delta": delta_obj, "index": choice.get("index", 0)})
+
                             if new_choices:
                                 out_chunk = {
                                     "id": completion_id,
@@ -678,73 +737,112 @@ def chat_completions():
                                     "choices": new_choices
                                 }
                                 yield f"data: {json.dumps(out_chunk, ensure_ascii=False)}\n\n"
+                                last_send_time = current_time
+
+                        except queue.Empty:
+                            continue  # 队列为空，继续循环
+
                 except Exception as e:
                     app.logger.error(f"[sse_stream] 异常: {e}")
                 finally:
-                    deepseek_resp.close()
                     if g.use_config_token:
                         active_accounts.discard(get_account_identifier(g.account))
+
             return Response(stream_with_context(sse_stream()), content_type="text/event-stream")
         else:
             # 非流式响应处理
             think_list = []
             text_list = []
-            try:
-                for raw_line in deepseek_resp.iter_lines(chunk_size=512):
-                    try:
-                        line = raw_line.decode("utf-8")
-                    except Exception as e:
-                        app.logger.warning(f"[chat_completions] 解码失败: {e}")
-                        continue
-                    if not line:
-                        continue
-                    if line.startswith("data:"):
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
+            result = None
+
+            # 创建数据收集线程
+            data_queue = queue.Queue()
+            def collect_data():
+                try:
+                    for raw_line in deepseek_resp.iter_lines(chunk_size=512):
                         try:
-                            chunk = json.loads(data_str)
-                            app.logger.info(f"[chat_completions] 非流式 chunk: {chunk}")
+                            line = raw_line.decode("utf-8")
                         except Exception as e:
-                            app.logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
+                            app.logger.warning(f"[chat_completions] 解码失败: {e}")
                             continue
-                        for choice in chunk.get("choices", []):
-                            delta = choice.get("delta", {})
-                            ctype = delta.get("type")
-                            if ctype == "thinking" and thinking_enabled:
-                                think_list.append(delta.get("content", ""))
-                            elif ctype == "text":
-                                text_list.append(delta.get("content", ""))
-            finally:
-                deepseek_resp.close()
-            final_reasoning = "".join(think_list)
-            final_content = "".join(text_list)
-            prompt_tokens = len(tokenizer.encode(final_prompt))
-            completion_tokens = len(tokenizer.encode(final_content))
-            total_tokens = prompt_tokens + completion_tokens
-            result = {
-                "id": completion_id,
-                "object": "chat.completion",
-                "created": created_time,
-                "model": model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": final_content,
-                            "reasoning_content": final_reasoning
-                        },
-                        "finish_reason": "stop"
+
+                        if not line:
+                            continue
+
+                        if line.startswith("data:"):
+                            data_str = line[5:].strip()
+                            if data_str == "[DONE]":
+                                data_queue.put(None)  # 发送结束信号
+                                break
+
+                            try:
+                                chunk = json.loads(data_str)
+                                # 处理数据
+                                for choice in chunk.get("choices", []):
+                                    delta = choice.get("delta", {})
+                                    ctype = delta.get("type")
+                                    if ctype == "thinking" and thinking_enabled:
+                                        think_list.append(delta.get("content", ""))
+                                    elif ctype == "text":
+                                        text_list.append(delta.get("content", ""))
+                            except Exception as e:
+                                app.logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
+                                continue
+                finally:
+                    deepseek_resp.close()
+                    # 处理完所有数据后，构造最终响应
+                    final_reasoning = "".join(think_list)
+                    final_content = "".join(text_list)
+                    prompt_tokens = len(tokenizer.encode(final_prompt))
+                    completion_tokens = len(tokenizer.encode(final_content))
+                    nonlocal result
+                    result = {
+                        "id": completion_id,
+                        "object": "chat.completion",
+                        "created": created_time,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": final_content,
+                                    "reasoning_content": final_reasoning
+                                },
+                                "finish_reason": "stop"
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": prompt_tokens + completion_tokens
+                        }
                     }
-                ],
-                "usage": {
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                    "total_tokens": total_tokens
-                }
-            }
-            return jsonify(result), 200
+
+            # 启动数据收集线程
+            collect_thread = threading.Thread(target=collect_data)
+            collect_thread.start()
+
+            def generate():
+                last_send_time = time.time()
+                
+                while True:
+                    # 每隔一段时间检查是否需要发送保活信号
+                    current_time = time.time()
+                    if current_time - last_send_time >= KEEP_ALIVE_TIMEOUT:
+                        app.logger.info("[chat_completions] 发送保活信号(空行)")
+                        yield '\n'
+                        last_send_time = current_time
+
+                    # 如果数据处理完成，返回最终结果
+                    if not collect_thread.is_alive() and result is not None:
+                        yield json.dumps(result)
+                        break
+
+                    time.sleep(0.1)  # 避免过度消耗 CPU
+
+            return Response(stream_with_context(generate()), mimetype="application/json")
+
     finally:
         if g.use_config_token:
             active_accounts.discard(get_account_identifier(g.account))
