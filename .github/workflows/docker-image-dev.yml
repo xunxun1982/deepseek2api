@@ -1,6 +1,7 @@
 name: Build and Push Dev Docker Image
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - dev
@@ -10,7 +11,7 @@ on:
       - '.github/**'
       - 'vercel.json'
       - '.gitignore'
-      
+
 jobs:
   build-and-push-dev:
     runs-on: ubuntu-latest
@@ -35,6 +36,6 @@ jobs:
         file: ./Dockerfile
         push: true
         tags: |
-          iidamie/deepseek2api:latest-dev
+          iidamie/deepseek2api:dev
         platforms: linux/amd64,linux/arm64
         build-args: TARGETPLATFORM=${{ matrix.platform }}
