@@ -139,7 +139,6 @@ def login_deepseek_via_account(account):
             "os": "android"
         }
     
-    # 增加 timeout 参数，防止请求阻塞过久
     resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
     resp.raise_for_status()
     data = resp.json()
@@ -244,7 +243,7 @@ def create_session(max_attempts=3):
     while attempts < max_attempts:
         headers = get_auth_headers()
         try:
-            resp = requests.post(DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"}, timeout=30)
+            resp = requests.post(DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"})
         except Exception as e:
             app.logger.error(f"[create_session] 请求异常: {e}")
             attempts += 1
