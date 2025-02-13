@@ -140,6 +140,7 @@ def login_deepseek_via_account(account):
         }
     
     # 增加 timeout 参数，防止请求阻塞过久
+    resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
     resp.raise_for_status()
     data = resp.json()
     if data.get("code") != 0:
@@ -458,6 +459,13 @@ def list_models():
     app.logger.info("[list_models] 用户请求 /v1/models")
     models_list = [
         {
+            "id": "deepseek-chat",
+            "object": "model",
+            "created": 1677610602,
+            "owned_by": "deepseek",
+            "permission": []
+        },
+        {
             "id": "deepseek-reasoner",
             "object": "model",
             "created": 1677610602,
@@ -465,7 +473,14 @@ def list_models():
             "permission": []
         },
         {
-            "id": "deepseek-chat",
+            "id": "deepseek-chat-search",
+            "object": "model",
+            "created": 1677610602,
+            "owned_by": "deepseek",
+            "permission": []
+        },
+        {
+            "id": "deepseek-reasoner-search",
             "object": "model",
             "created": 1677610602,
             "owned_by": "deepseek",
@@ -559,12 +574,20 @@ def chat_completions():
         if not model or not messages:
             return jsonify({"error": "Request must include 'model' and 'messages'."}), 400
 
-        # 判断是否启用“思考”功能（这里根据模型名称判断）
+        # 判断是否启用“思考”或”思考“功能（这里根据模型名称判断）
         model_lower = model.lower()
         if model_lower in ["deepseek-v3", "deepseek-chat"]:
             thinking_enabled = False
+            search_enabled = False
         elif model_lower in ["deepseek-r1", "deepseek-reasoner"]:
             thinking_enabled = True
+            search_enabled = False
+        elif model_lower in ["deepseek-v3-search", "deepseek-chat-search"]:
+            thinking_enabled = False
+            search_enabled = True
+        elif model_lower in ["deepseek-r1-search", "deepseek-reasoner-search"]:
+            thinking_enabled = True
+            search_enabled = True
         else:
             return jsonify({"error": f"Model '{model}' is not available."}), 503
 
@@ -590,7 +613,7 @@ def chat_completions():
             "prompt": final_prompt,
             "ref_file_ids": [],
             "thinking_enabled": thinking_enabled,
-            "search_enabled": False
+            "search_enabled": search_enabled
         }
         app.logger.info(f"[chat_completions] -> {DEEPSEEK_COMPLETION_URL}, payload={payload}")
 
