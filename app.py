@@ -719,7 +719,7 @@ def chat_completions():
                                 ctext = delta.get("content", "")
                                 
                                 # 如果是搜索启用状态且内容包含 citation 标记，进行格式转换
-                                if search_enabled and ctype == "text" and ctext.startswith("[citation:"):
+                                if search_enabled and ctext.startswith("[citation:"):
                                     # 提取引用编号
                                     cite_num = ctext.strip("[]").split(":")[1]
                                     if cite_num in citation_map:
@@ -808,7 +808,7 @@ def chat_completions():
                                     ctext = delta.get("content", "")
                                     
                                     # 如果是搜索启用状态且内容包含 citation 标记，进行格式转换
-                                    if search_enabled and ctype == "text" and ctext.startswith("[citation:"):
+                                    if search_enabled and ctext.startswith("[citation:"):
                                         # 提取引用编号
                                         cite_num = ctext.strip("[]").split(":")[1]
                                         if cite_num in citation_map:
