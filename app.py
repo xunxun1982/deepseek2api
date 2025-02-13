@@ -574,7 +574,7 @@ def chat_completions():
         if not model or not messages:
             return jsonify({"error": "Request must include 'model' and 'messages'."}), 400
 
-        # 判断是否启用“思考”或”思考“功能（这里根据模型名称判断）
+        # 判断是否启用"思考"或"搜索"功能（这里根据模型名称判断）
         model_lower = model.lower()
         if model_lower in ["deepseek-v3", "deepseek-chat"]:
             thinking_enabled = False
@@ -639,6 +639,7 @@ def chat_completions():
                     first_chunk_sent = False
                     result_queue = queue.Queue()
                     last_send_time = time.time()
+                    citation_map = {}  # 用于存储引用链接的字典
 
                     def process_data():
                         try:
@@ -660,6 +661,12 @@ def chat_completions():
 
                                     try:
                                         chunk = json.loads(data_str)
+                                        # 处理搜索索引数据
+                                        if chunk.get("choices", [{}])[0].get("delta", {}).get("type") == "search_index":
+                                            search_indexes = chunk["choices"][0]["delta"].get("search_indexes", [])
+                                            for idx in search_indexes:
+                                                citation_map[str(idx.get("cite_index"))] = idx.get("url", "")
+                                            continue
                                         result_queue.put(chunk)  # 将数据放入队列
                                     except Exception as e:
                                         app.logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
@@ -710,6 +717,15 @@ def chat_completions():
                                 delta = choice.get("delta", {})
                                 ctype = delta.get("type")
                                 ctext = delta.get("content", "")
+                                
+                                # 如果是搜索启用状态且内容包含 citation 标记，进行格式转换
+                                if search_enabled and ctype == "text" and ctext.startswith("[citation:"):
+                                    # 提取引用编号
+                                    cite_num = ctext.strip("[]").split(":")[1]
+                                    if cite_num in citation_map:
+                                        # 转换为新格式
+                                        ctext = f"[[{cite_num}]]({citation_map[cite_num]})"
+                                
                                 if ctype == "thinking":
                                     if thinking_enabled:
                                         final_thinking += ctext
@@ -754,6 +770,7 @@ def chat_completions():
             think_list = []
             text_list = []
             result = None
+            citation_map = {}  # 用于存储引用链接的字典
 
             # 创建数据收集线程
             data_queue = queue.Queue()
@@ -777,14 +794,31 @@ def chat_completions():
 
                             try:
                                 chunk = json.loads(data_str)
+                                # 处理搜索索引数据
+                                if chunk.get("choices", [{}])[0].get("delta", {}).get("type") == "search_index":
+                                    search_indexes = chunk["choices"][0]["delta"].get("search_indexes", [])
+                                    for idx in search_indexes:
+                                        citation_map[str(idx.get("cite_index"))] = idx.get("url", "")
+                                    continue
+                                
                                 # 处理数据
                                 for choice in chunk.get("choices", []):
                                     delta = choice.get("delta", {})
                                     ctype = delta.get("type")
+                                    ctext = delta.get("content", "")
+                                    
+                                    # 如果是搜索启用状态且内容包含 citation 标记，进行格式转换
+                                    if search_enabled and ctype == "text" and ctext.startswith("[citation:"):
+                                        # 提取引用编号
+                                        cite_num = ctext.strip("[]").split(":")[1]
+                                        if cite_num in citation_map:
+                                            # 转换为新格式
+                                            ctext = f"[[{cite_num}]]({citation_map[cite_num]})"
+                                    
                                     if ctype == "thinking" and thinking_enabled:
-                                        think_list.append(delta.get("content", ""))
+                                        think_list.append(ctext)
                                     elif ctype == "text":
-                                        text_list.append(delta.get("content", ""))
+                                        text_list.append(ctext)
                             except Exception as e:
                                 app.logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
                                 continue
