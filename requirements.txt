@@ -1,5 +1,6 @@
 fastapi
 uvicorn
-wasmtime
 curl_cffi
 transformers
+wasmtime
+jinja2
