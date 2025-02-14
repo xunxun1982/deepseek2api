@@ -3,49 +3,48 @@ import json
 import base64
 import time
 import logging
-from curl_cffi import requests
 import random
-from flask import Flask, render_template, request, Response, stream_with_context, jsonify, g
-from waitress import serve
 import os
+import re
 import struct
 import ctypes
-from wasmtime import Store, Module, Linker
-import re
-import transformers
 import threading
 import queue
+
+from curl_cffi import requests
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates
+import transformers
+
+from wasmtime import Store, Module, Linker
 
 # -------------------------- 初始化 tokenizer --------------------------
 chat_tokenizer_dir = "./"  # 请确保目录下有正确的 tokenizer 配置文件或模型文件
 tokenizer = transformers.AutoTokenizer.from_pretrained(chat_tokenizer_dir, trust_remote_code=True)
 
-# ----------------------------------------------------------------------
-# =========================== 日志配置 ===========================
+# -------------------------- 日志配置 --------------------------
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 )
-app = Flask(__name__)
+logger = logging.getLogger("main")
 
-# -------------------- 全局添加 CORS 支持 --------------------
-@app.before_request
-def handle_options_request():
-    if request.method == 'OPTIONS':
-        response = Response()
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
-        return response
+app = FastAPI()
 
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return response
+# 添加 CORS 中间件，允许所有来源
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
+)
 
-# ----------------------------------------------------------------------
+# 模板目录（请确保存在 templates/welcome.html 文件）
+templates = Jinja2Templates(directory="templates")
+
 # 全局集合：记录当前正在对话中的账号（以 email 或 phone 标识），保证同一账号同时只进行一个对话
 active_accounts = set()
 
@@ -60,7 +59,7 @@ def load_config():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        app.logger.warning(f"[load_config] 无法读取配置文件: {e}")
+        logger.warning(f"[load_config] 无法读取配置文件: {e}")
         return {}
 
 def save_config(cfg):
@@ -68,9 +67,9 @@ def save_config(cfg):
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
-        app.logger.info("[save_config] 配置已写回 config.json")
+        logger.info("[save_config] 配置已写回 config.json")
     except Exception as e:
-        app.logger.error(f"[save_config] 写入 config.json 失败: {e}")
+        logger.error(f"[save_config] 写入 config.json 失败: {e}")
 
 CONFIG = load_config()
 
@@ -78,12 +77,10 @@ CONFIG = load_config()
 # (2) DeepSeek 相关常量
 # ----------------------------------------------------------------------
 DEEPSEEK_HOST = "chat.deepseek.com"
-
 DEEPSEEK_LOGIN_URL = f"https://{DEEPSEEK_HOST}/api/v0/users/login"
 DEEPSEEK_CREATE_SESSION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat_session/create"
 DEEPSEEK_CREATE_POW_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/create_pow_challenge"
 DEEPSEEK_COMPLETION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/completion"
-
 BASE_HEADERS = {
     'Host': "chat.deepseek.com",
     'User-Agent': "DeepSeek/1.0.9 Android/34",
@@ -112,15 +109,15 @@ def get_account_identifier(account):
 # ----------------------------------------------------------------------
 def login_deepseek_via_account(account):
     """使用 account 中的 email 或 mobile 登录 DeepSeek，
-    成功后将返回的 token 写入 account 并保存至配置文件，返回新 token。"""
+    成功后将返回的 token 写入 account 并保存至配置文件，返回新 token。
+    """
     email = account.get("email", "").strip()
     mobile = account.get("mobile", "").strip()
     password = account.get("password", "").strip()
     if not password or (not email and not mobile):
-        raise ValueError("账号缺少必要的登录信息（必须提供 email 或 mobile 以及 password）")
-    
+        raise HTTPException(status_code=400, detail="账号缺少必要的登录信息（必须提供 email 或 mobile 以及 password）")
     if email:
-        app.logger.info(f"[login_deepseek_via_account] 正在使用 email 登录账号：{email}")
+        logger.info(f"[login_deepseek_via_account] 正在使用 email 登录账号：{email}")
         payload = {
             "email": email,
             "mobile": "",
@@ -130,7 +127,7 @@ def login_deepseek_via_account(account):
             "os": "android"
         }
     else:
-        app.logger.info(f"[login_deepseek_via_account] 正在使用 mobile 登录账号：{mobile}")
+        logger.info(f"[login_deepseek_via_account] 正在使用 mobile 登录账号：{mobile}")
         payload = {
             "mobile": mobile,
             "area_code": None,
@@ -138,18 +135,31 @@ def login_deepseek_via_account(account):
             "device_id": "deepseek_to_api",
             "os": "android"
         }
-    
-    resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
-    resp.raise_for_status()
-    data = resp.json()
-    if data.get("code") != 0:
-        raise ValueError(f"登录失败, code={data.get('code')}, msg={data.get('msg')}")
-    
-    new_token = data["data"]["biz_data"]["user"]["token"]
+    try:
+        resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
+        resp.raise_for_status()
+    except Exception as e:
+        logger.error(f"[login_deepseek_via_account] 登录请求异常: {e}")
+        raise HTTPException(status_code=500, detail="Account login failed: 请求异常")
+    try:
+        data = resp.json()
+    except Exception as e:
+        logger.error(f"[login_deepseek_via_account] JSON解析失败: {e}")
+        raise HTTPException(status_code=500, detail="Account login failed: invalid JSON response")
+    # 校验响应数据格式是否正确
+    if (data.get("data") is None or 
+        data["data"].get("biz_data") is None or 
+        data["data"]["biz_data"].get("user") is None):
+        logger.error(f"[login_deepseek_via_account] 登录响应格式错误: {data}")
+        raise HTTPException(status_code=500, detail="Account login failed: invalid response format")
+    new_token = data["data"]["biz_data"]["user"].get("token")
+    if not new_token:
+        logger.error(f"[login_deepseek_via_account] 登录响应中缺少 token: {data}")
+        raise HTTPException(status_code=500, detail="Account login failed: missing token")
     account["token"] = new_token
     save_config(CONFIG)
     identifier = email if email else mobile
-    app.logger.info(f"[login_deepseek_via_account] 成功登录账号 {identifier}，token: {new_token}")
+    logger.info(f"[login_deepseek_via_account] 成功登录账号 {identifier}，token: {new_token}")
     return new_token
 
 # ----------------------------------------------------------------------
@@ -163,55 +173,52 @@ def choose_new_account(exclude_ids):
     ]
     if available:
         chosen = random.choice(available)
-        app.logger.info(f"[choose_new_account] 新选择账号: {get_account_identifier(chosen)}")
+        logger.info(f"[choose_new_account] 新选择账号: {get_account_identifier(chosen)}")
         return chosen
-    app.logger.warning("[choose_new_account] 没有可用的账号")
+    logger.warning("[choose_new_account] 没有可用的账号")
     return None
 
 # ----------------------------------------------------------------------
 # (5) 判断调用模式：配置模式 vs 用户自带 token
 # ----------------------------------------------------------------------
-def determine_mode_and_token():
-    """根据请求头 Authorization 判断使用哪种模式：
+def determine_mode_and_token(request: Request):
+    """
+    根据请求头 Authorization 判断使用哪种模式：
     - 如果 Bearer token 出现在 CONFIG["keys"] 中，则为配置模式，从 CONFIG["accounts"] 中随机选择一个账号（排除已尝试账号），
       检查该账号是否已有 token，否则调用登录接口获取；
     - 否则，直接使用请求中的 Bearer 值作为 DeepSeek token。
-    结果存入 g.deepseek_token；配置模式下同时存入 g.account 与 g.tried_accounts。
+    结果存入 request.state.deepseek_token；配置模式下同时存入 request.state.account 与 request.state.tried_accounts。
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        return Response(json.dumps({"error": "Unauthorized: missing Bearer token."}),
-                        status=401, mimetype="application/json")
+        raise HTTPException(status_code=401, detail="Unauthorized: missing Bearer token.")
     caller_key = auth_header.replace("Bearer ", "", 1).strip()
     config_keys = CONFIG.get("keys", [])
     if caller_key in config_keys:
-        g.use_config_token = True
-        g.tried_accounts = []  # 初始化已尝试账号
-        selected_account = choose_new_account(g.tried_accounts)
+        request.state.use_config_token = True
+        request.state.tried_accounts = []  # 初始化已尝试账号
+        selected_account = choose_new_account(request.state.tried_accounts)
         if not selected_account:
-            return Response(json.dumps({"error": "No accounts configured."}),
-                            status=500, mimetype="application/json")
+            raise HTTPException(status_code=500, detail="No accounts configured.")
         if not selected_account.get("token", "").strip():
             try:
                 login_deepseek_via_account(selected_account)
             except Exception as e:
-                app.logger.error(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 登录失败：{e}")
-                return Response(json.dumps({"error": "Account login failed."}),
-                                status=500, mimetype="application/json")
+                logger.error(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 登录失败：{e}")
+                raise HTTPException(status_code=500, detail="Account login failed.")
         else:
-            app.logger.info(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 已有 token，无需重新登录")
-        g.deepseek_token = selected_account.get("token")
-        g.account = selected_account
-        app.logger.info(f"[determine_mode_and_token] 配置模式：使用账号 {get_account_identifier(selected_account)} 的 token")
+            logger.info(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 已有 token，无需重新登录")
+        request.state.deepseek_token = selected_account.get("token")
+        request.state.account = selected_account
+        logger.info(f"[determine_mode_and_token] 配置模式：使用账号 {get_account_identifier(selected_account)} 的 token")
     else:
-        g.use_config_token = False
-        g.deepseek_token = caller_key
-        app.logger.info("[determine_mode_and_token] 使用用户自带 DeepSeek token")
-    return None
+        request.state.use_config_token = False
+        request.state.deepseek_token = caller_key
+        logger.info("[determine_mode_and_token] 使用用户自带 DeepSeek token")
 
-def get_auth_headers():
+def get_auth_headers(request: Request):
     """返回 DeepSeek 请求所需的公共请求头"""
-    return { **BASE_HEADERS, "authorization": f"Bearer {g.deepseek_token}" }
+    return { **BASE_HEADERS, "authorization": f"Bearer {request.state.deepseek_token}" }
 
 # ----------------------------------------------------------------------
 # (6) 封装对话接口调用的重试机制
@@ -222,14 +229,14 @@ def call_completion_endpoint(payload, headers, max_attempts=3):
         try:
             deepseek_resp = requests.post(DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True)
         except Exception as e:
-            app.logger.warning(f"[call_completion_endpoint] 请求异常: {e}")
+            logger.warning(f"[call_completion_endpoint] 请求异常: {e}")
             time.sleep(1)
             attempts += 1
             continue
         if deepseek_resp.status_code == 200:
             return deepseek_resp
         else:
-            app.logger.warning(f"[call_completion_endpoint] 调用对话接口失败, 状态码: {deepseek_resp.status_code}")
+            logger.warning(f"[call_completion_endpoint] 调用对话接口失败, 状态码: {deepseek_resp.status_code}")
             deepseek_resp.close()
             time.sleep(1)
             attempts += 1
@@ -238,47 +245,47 @@ def call_completion_endpoint(payload, headers, max_attempts=3):
 # ----------------------------------------------------------------------
 # (7) 创建会话 & 获取 PoW（重试时，配置模式下错误会切换账号；用户自带 token 模式下仅重试）
 # ----------------------------------------------------------------------
-def create_session(max_attempts=3):
+def create_session(request: Request, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
-        headers = get_auth_headers()
+        headers = get_auth_headers(request)
         try:
             resp = requests.post(DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"})
         except Exception as e:
-            app.logger.error(f"[create_session] 请求异常: {e}")
+            logger.error(f"[create_session] 请求异常: {e}")
             attempts += 1
             continue
         try:
             data = resp.json()
         except Exception as e:
-            app.logger.error(f"[create_session] JSON解析异常: {e}")
+            logger.error(f"[create_session] JSON解析异常: {e}")
             data = {}
         if resp.status_code == 200 and data.get("code") == 0:
             session_id = data["data"]["biz_data"]["id"]
-            app.logger.info(f"[create_session] 新会话 chat_session_id={session_id}")
+            logger.info(f"[create_session] 新会话 chat_session_id={session_id}")
             resp.close()
             return session_id
         else:
             code = data.get("code")
-            app.logger.warning(f"[create_session] 创建会话失败, code={code}, msg={data.get('msg')}")
+            logger.warning(f"[create_session] 创建会话失败, code={code}, msg={data.get('msg')}")
             resp.close()
-            if g.use_config_token:
-                current_id = get_account_identifier(g.account)
-                if not hasattr(g, 'tried_accounts'):
-                    g.tried_accounts = []
-                if current_id not in g.tried_accounts:
-                    g.tried_accounts.append(current_id)
-                new_account = choose_new_account(g.tried_accounts)
+            if request.state.use_config_token:
+                current_id = get_account_identifier(request.state.account)
+                if not hasattr(request.state, 'tried_accounts'):
+                    request.state.tried_accounts = []
+                if current_id not in request.state.tried_accounts:
+                    request.state.tried_accounts.append(current_id)
+                new_account = choose_new_account(request.state.tried_accounts)
                 if new_account is None:
                     break
                 try:
                     login_deepseek_via_account(new_account)
                 except Exception as e:
-                    app.logger.error(f"[create_session] 账号 {get_account_identifier(new_account)} 登录失败：{e}")
+                    logger.error(f"[create_session] 账号 {get_account_identifier(new_account)} 登录失败：{e}")
                     attempts += 1
                     continue
-                g.account = new_account
-                g.deepseek_token = new_account.get("token")
+                request.state.account = new_account
+                request.state.deepseek_token = new_account.get("token")
             else:
                 attempts += 1
                 continue
@@ -306,9 +313,7 @@ def compute_pow_answer(algorithm: str,
     """
     if algorithm != "DeepSeekHashV1":
         raise ValueError(f"不支持的算法：{algorithm}")
-
     prefix = f"{salt}_{expire_at}_"
-
     # --- 加载 wasm 模块 ---
     store = Store()
     linker = Linker(store.engine)
@@ -372,20 +377,20 @@ def compute_pow_answer(algorithm: str,
 # ----------------------------------------------------------------------
 # (7.2) 获取 PoW 响应，融合计算 answer 逻辑
 # ----------------------------------------------------------------------
-def get_pow_response(max_attempts=3):
+def get_pow_response(request: Request, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
-        headers = get_auth_headers()
+        headers = get_auth_headers(request)
         try:
             resp = requests.post(DEEPSEEK_CREATE_POW_URL, headers=headers, json={"target_path": "/api/v0/chat/completion"}, timeout=30)
         except Exception as e:
-            app.logger.error(f"[get_pow_response] 请求异常: {e}")
+            logger.error(f"[get_pow_response] 请求异常: {e}")
             attempts += 1
             continue
         try:
             data = resp.json()
         except Exception as e:
-            app.logger.error(f"[get_pow_response] JSON解析异常: {e}")
+            logger.error(f"[get_pow_response] JSON解析异常: {e}")
             data = {}
         if resp.status_code == 200 and data.get("code") == 0:
             challenge = data["data"]["biz_data"]["challenge"]
@@ -403,14 +408,13 @@ def get_pow_response(max_attempts=3):
                     WASM_PATH
                 )
             except Exception as e:
-                app.logger.error(f"[get_pow_response] PoW 答案计算异常: {e}")
+                logger.error(f"[get_pow_response] PoW 答案计算异常: {e}")
                 answer = None
             if answer is None:
-                app.logger.warning("[get_pow_response] PoW 答案计算失败，重试中...")
+                logger.warning("[get_pow_response] PoW 答案计算失败，重试中...")
                 resp.close()
                 attempts += 1
                 continue
-
             pow_dict = {
                 "algorithm": challenge["algorithm"],
                 "challenge": challenge["challenge"],
@@ -425,25 +429,25 @@ def get_pow_response(max_attempts=3):
             return encoded
         else:
             code = data.get("code")
-            app.logger.warning(f"[get_pow_response] 获取 PoW 失败, code={code}, msg={data.get('msg')}")
+            logger.warning(f"[get_pow_response] 获取 PoW 失败, code={code}, msg={data.get('msg')}")
             resp.close()
-            if g.use_config_token:
-                current_id = get_account_identifier(g.account)
-                if not hasattr(g, 'tried_accounts'):
-                    g.tried_accounts = []
-                if current_id not in g.tried_accounts:
-                    g.tried_accounts.append(current_id)
-                new_account = choose_new_account(g.tried_accounts)
+            if request.state.use_config_token:
+                current_id = get_account_identifier(request.state.account)
+                if not hasattr(request.state, 'tried_accounts'):
+                    request.state.tried_accounts = []
+                if current_id not in request.state.tried_accounts:
+                    request.state.tried_accounts.append(current_id)
+                new_account = choose_new_account(request.state.tried_accounts)
                 if new_account is None:
                     break
                 try:
                     login_deepseek_via_account(new_account)
                 except Exception as e:
-                    app.logger.error(f"[get_pow_response] 账号 {get_account_identifier(new_account)} 登录失败：{e}")
+                    logger.error(f"[get_pow_response] 账号 {get_account_identifier(new_account)} 登录失败：{e}")
                     attempts += 1
                     continue
-                g.account = new_account
-                g.deepseek_token = new_account.get("token")
+                request.state.account = new_account
+                request.state.deepseek_token = new_account.get("token")
             else:
                 attempts += 1
                 continue
@@ -453,9 +457,9 @@ def get_pow_response(max_attempts=3):
 # ----------------------------------------------------------------------
 # (8) 路由：/v1/models（模拟 OpenAI 模型列表）
 # ----------------------------------------------------------------------
-@app.route("/v1/models", methods=["GET"])
+@app.get("/v1/models")
 def list_models():
-    app.logger.info("[list_models] 用户请求 /v1/models")
+    logger.info("[list_models] 用户请求 /v1/models")
     models_list = [
         {
             "id": "deepseek-chat",
@@ -487,7 +491,7 @@ def list_models():
         }
     ]
     data = {"object": "list", "data": models_list}
-    return jsonify(data), 200
+    return JSONResponse(content=data, status_code=200)
 
 # ----------------------------------------------------------------------
 # (新增) 消息预处理函数，将多轮对话合并成最终 prompt
@@ -543,36 +547,41 @@ KEEP_ALIVE_TIMEOUT = 5
 # ----------------------------------------------------------------------
 # (10) 路由：/v1/chat/completions
 # ----------------------------------------------------------------------
-@app.route("/v1/chat/completions", methods=["POST"])
-def chat_completions():
-    mode_resp = determine_mode_and_token()
-    if mode_resp:
-        return mode_resp
-
-    # 如果使用配置模式，检查账号是否正忙；如果忙则尝试切换账号
-    if g.use_config_token:
-        account_id = get_account_identifier(g.account)
-        if account_id in active_accounts:
-            g.tried_accounts.append(account_id)
-            new_account = choose_new_account(g.tried_accounts)
-            if new_account is None:
-                return jsonify({"error": "All accounts are busy."}), 503
-            try:
-                login_deepseek_via_account(new_account)
-            except Exception as e:
-                return jsonify({"error": "Account login failed."}), 500
-            g.account = new_account
-            g.deepseek_token = new_account.get("token")
-            account_id = get_account_identifier(new_account)
-        active_accounts.add(account_id)
+@app.post("/v1/chat/completions")
+async def chat_completions(request: Request):
     try:
-        req_data = request.json or {}
-        app.logger.info(f"[chat_completions] 收到请求: {req_data}")
+        # 处理 token 相关逻辑，若登录失败则直接返回错误响应
+        try:
+            determine_mode_and_token(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+        except Exception as exc:
+            logger.error(f"[chat_completions] determine_mode_and_token 异常: {exc}")
+            return JSONResponse(status_code=500, content={"error": "Account login failed."})
+
+        # 如果使用配置模式，检查账号是否正忙；如果忙则尝试切换账号
+        if getattr(request.state, "use_config_token", False):
+            account_id = get_account_identifier(getattr(request.state, "account", {}))
+            if account_id in active_accounts:
+                request.state.tried_accounts.append(account_id)
+                new_account = choose_new_account(request.state.tried_accounts)
+                if new_account is None:
+                    raise HTTPException(status_code=503, detail="All accounts are busy.")
+                try:
+                    login_deepseek_via_account(new_account)
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail="Account login failed.")
+                request.state.account = new_account
+                request.state.deepseek_token = new_account.get("token")
+                account_id = get_account_identifier(new_account)
+            active_accounts.add(account_id)
+
+        req_data = await request.json()
+        logger.info(f"[chat_completions] 收到请求: {req_data}")
         model = req_data.get("model")
         messages = req_data.get("messages", [])
         if not model or not messages:
-            return jsonify({"error": "Request must include 'model' and 'messages'."}), 400
-
+            raise HTTPException(status_code=400, detail="Request must include 'model' and 'messages'.")
         # 判断是否启用"思考"或"搜索"功能（这里根据模型名称判断）
         model_lower = model.lower()
         if model_lower in ["deepseek-v3", "deepseek-chat"]:
@@ -588,22 +597,18 @@ def chat_completions():
             thinking_enabled = True
             search_enabled = True
         else:
-            return jsonify({"error": f"Model '{model}' is not available."}), 503
-
+            raise HTTPException(status_code=503, detail=f"Model '{model}' is not available.")
         # 使用 messages_prepare 函数构造最终 prompt
         final_prompt = messages_prepare(messages)
-
-        session_id = create_session()
+        session_id = create_session(request)
         if not session_id:
-            return jsonify({"error": "invalid token."}), 401
-
-        pow_resp = get_pow_response()
+            raise HTTPException(status_code=401, detail="invalid token.")
+        pow_resp = get_pow_response(request)
         if not pow_resp:
-            return jsonify({"error": "Failed to get PoW (invalid token or unknown error)."}), 401
-        app.logger.info(f"获取 PoW 成功: {pow_resp}")
-
+            raise HTTPException(status_code=401, detail="Failed to get PoW (invalid token or unknown error).")
+        logger.info(f"获取 PoW 成功: {pow_resp}")
         headers = {
-            **get_auth_headers(),
+            **get_auth_headers(request),
             "x-ds-pow-response": pow_resp
         }
         payload = {
@@ -614,23 +619,18 @@ def chat_completions():
             "thinking_enabled": thinking_enabled,
             "search_enabled": search_enabled
         }
-        app.logger.info(f"[chat_completions] -> {DEEPSEEK_COMPLETION_URL}, payload={payload}")
-
+        logger.info(f"[chat_completions] -> {DEEPSEEK_COMPLETION_URL}, payload={payload}")
         deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3)
         if not deepseek_resp:
-            return jsonify({"error": "Failed to get completion."}), 500
-
+            raise HTTPException(status_code=500, detail="Failed to get completion.")
         created_time = int(time.time())
         completion_id = f"{session_id}"
 
-        # 流式响应：SSE 格式返回事件流
+        # 流式响应（SSE）或普通响应
         if bool(req_data.get("stream", False)):
             if deepseek_resp.status_code != 200:
                 deepseek_resp.close()
-                return Response(deepseek_resp.content,
-                                status=deepseek_resp.status_code,
-                                mimetype="application/json")
-
+                return JSONResponse(content=deepseek_resp.content, status_code=deepseek_resp.status_code)
             def sse_stream():
                 try:
                     final_text = ""
@@ -646,18 +646,15 @@ def chat_completions():
                                 try:
                                     line = raw_line.decode("utf-8")
                                 except Exception as e:
-                                    app.logger.warning(f"[sse_stream] 解码失败: {e}")
+                                    logger.warning(f"[sse_stream] 解码失败: {e}")
                                     continue
-
                                 if not line:
                                     continue
-
                                 if line.startswith("data:"):
                                     data_str = line[5:].strip()
                                     if data_str == "[DONE]":
                                         result_queue.put(None)  # 结束信号
                                         break
-
                                     try:
                                         chunk = json.loads(data_str)
                                         # 处理搜索索引数据
@@ -668,26 +665,24 @@ def chat_completions():
                                             continue
                                         result_queue.put(chunk)  # 将数据放入队列
                                     except Exception as e:
-                                        app.logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
+                                        logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
                         finally:
                             deepseek_resp.close()
 
-                    # 启动数据处理线程
                     process_thread = threading.Thread(target=process_data)
                     process_thread.start()
 
                     while True:
                         current_time = time.time()
                         if current_time - last_send_time >= KEEP_ALIVE_TIMEOUT:
-                            app.logger.info("[sse_stream] 发送保活信号")
+                            logger.info("[sse_stream] 发送保活信号")
                             yield ": keep-alive\n\n"
                             last_send_time = current_time
                             continue
-
                         try:
-                            chunk = result_queue.get(timeout=0.1)  # 100ms 超时
-                            if chunk is None:  # 结束信号
-                                # 发送最终的统计信息
+                            chunk = result_queue.get(timeout=0.1)
+                            if chunk is None:
+                                # 发送最终统计信息
                                 prompt_tokens = len(tokenizer.encode(final_prompt))
                                 completion_tokens = len(tokenizer.encode(final_text))
                                 usage = {
@@ -709,29 +704,18 @@ def chat_completions():
                                 yield "data: [DONE]\n\n"
                                 last_send_time = current_time
                                 break
-
-                            # 处理数据块
                             new_choices = []
                             for choice in chunk.get("choices", []):
                                 delta = choice.get("delta", {})
                                 ctype = delta.get("type")
                                 ctext = delta.get("content", "")
-                                
-                                # 如果是搜索启用状态且内容包含 citation 标记，进行格式转换
                                 if search_enabled and ctext.startswith("[citation:"):
-                                    # 提取引用编号
-                                    # cite_num = ctext.strip("[]").split(":")[1]
-                                    # if cite_num in citation_map:
-                                        # 转换为新格式
-                                        # ctext = f"[[{cite_num}]]({citation_map[cite_num]})"
                                     ctext = ""
-                                
                                 if ctype == "thinking":
                                     if thinking_enabled:
                                         final_thinking += ctext
                                 elif ctype == "text":
                                     final_text += ctext
-                                
                                 delta_obj = {}
                                 if not first_chunk_sent:
                                     delta_obj["role"] = "assistant"
@@ -743,7 +727,6 @@ def chat_completions():
                                     delta_obj["content"] = ctext
                                 if delta_obj:
                                     new_choices.append({"delta": delta_obj, "index": choice.get("index", 0)})
-
                             if new_choices:
                                 out_chunk = {
                                     "id": completion_id,
@@ -754,83 +737,64 @@ def chat_completions():
                                 }
                                 yield f"data: {json.dumps(out_chunk, ensure_ascii=False)}\n\n"
                                 last_send_time = current_time
-
                         except queue.Empty:
-                            continue  # 队列为空，继续循环
-
+                            continue
                 except Exception as e:
-                    app.logger.error(f"[sse_stream] 异常: {e}")
+                    logger.error(f"[sse_stream] 异常: {e}")
                 finally:
-                    if g.use_config_token:
-                        active_accounts.discard(get_account_identifier(g.account))
-
-            return Response(stream_with_context(sse_stream()), content_type="text/event-stream")
+                    if getattr(request.state, "use_config_token", False) and hasattr(request.state, "account"):
+                        active_accounts.discard(get_account_identifier(request.state.account))
+            return StreamingResponse(sse_stream(), media_type="text/event-stream")
         else:
             # 非流式响应处理
             think_list = []
             text_list = []
             result = None
-            citation_map = {}  # 用于存储引用链接的字典
+            citation_map = {}
 
-            # 创建数据收集线程
             data_queue = queue.Queue()
             def collect_data():
+                nonlocal result
                 try:
                     for raw_line in deepseek_resp.iter_lines(chunk_size=512):
                         try:
                             line = raw_line.decode("utf-8")
                         except Exception as e:
-                            app.logger.warning(f"[chat_completions] 解码失败: {e}")
+                            logger.warning(f"[chat_completions] 解码失败: {e}")
                             continue
-
                         if not line:
                             continue
-
                         if line.startswith("data:"):
                             data_str = line[5:].strip()
                             if data_str == "[DONE]":
-                                data_queue.put(None)  # 发送结束信号
+                                data_queue.put(None)
                                 break
-
                             try:
                                 chunk = json.loads(data_str)
-                                # 处理搜索索引数据
                                 if chunk.get("choices", [{}])[0].get("delta", {}).get("type") == "search_index":
                                     search_indexes = chunk["choices"][0]["delta"].get("search_indexes", [])
                                     for idx in search_indexes:
                                         citation_map[str(idx.get("cite_index"))] = idx.get("url", "")
                                     continue
-                                
-                                # 处理数据
                                 for choice in chunk.get("choices", []):
                                     delta = choice.get("delta", {})
                                     ctype = delta.get("type")
                                     ctext = delta.get("content", "")
-                                    
-                                    # 如果是搜索启用状态且内容包含 citation 标记，进行格式转换
                                     if search_enabled and ctext.startswith("[citation:"):
-                                        # 提取引用编号
-                                        # cite_num = ctext.strip("[]").split(":")[1]
-                                        # if cite_num in citation_map:
-                                            # 转换为新格式
-                                            # ctext = f"[[{cite_num}]]({citation_map[cite_num]})"
                                         ctext = ""
-                                    
                                     if ctype == "thinking" and thinking_enabled:
                                         think_list.append(ctext)
                                     elif ctype == "text":
                                         text_list.append(ctext)
                             except Exception as e:
-                                app.logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
+                                logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
                                 continue
                 finally:
                     deepseek_resp.close()
-                    # 处理完所有数据后，构造最终响应
                     final_reasoning = "".join(think_list)
                     final_content = "".join(text_list)
                     prompt_tokens = len(tokenizer.encode(final_prompt))
                     completion_tokens = len(tokenizer.encode(final_content))
-                    nonlocal result
                     result = {
                         "id": completion_id,
                         "object": "chat.completion",
@@ -853,44 +817,41 @@ def chat_completions():
                             "total_tokens": prompt_tokens + completion_tokens
                         }
                     }
-
-            # 启动数据收集线程
+                    data_queue.put("DONE")
             collect_thread = threading.Thread(target=collect_data)
             collect_thread.start()
-
             def generate():
                 last_send_time = time.time()
-                
                 while True:
-                    # 每隔一段时间检查是否需要发送保活信号
                     current_time = time.time()
                     if current_time - last_send_time >= KEEP_ALIVE_TIMEOUT:
-                        app.logger.info("[chat_completions] 发送保活信号(空行)")
+                        logger.info("[chat_completions] 发送保活信号(空行)")
                         yield '\n'
                         last_send_time = current_time
-
-                    # 如果数据处理完成，返回最终结果
                     if not collect_thread.is_alive() and result is not None:
                         yield json.dumps(result)
                         break
-
-                    time.sleep(0.1)  # 避免过度消耗 CPU
-
-            return Response(stream_with_context(generate()), mimetype="application/json")
-
+                    time.sleep(0.1)
+            return StreamingResponse(generate(), media_type="application/json")
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+    except Exception as exc:
+        logger.error(f"[chat_completions] 未知异常: {exc}")
+        return JSONResponse(status_code=500, content={"error": "Internal Server Error"})
     finally:
-        if g.use_config_token:
-            active_accounts.discard(get_account_identifier(g.account))
+        if getattr(request.state, "use_config_token", False) and hasattr(request.state, "account"):
+            active_accounts.discard(get_account_identifier(request.state.account))
 
 # ----------------------------------------------------------------------
 # (11) 路由：/
 # ----------------------------------------------------------------------
-@app.route("/")
-def index():
-    return render_template("welcome.html")
+@app.get("/")
+def index(request: Request):
+    return templates.TemplateResponse("welcome.html", {"request": request})
 
 # ----------------------------------------------------------------------
-# 启动 Flask 应用
+# 启动 FastAPI 应用（可用 uvicorn 启动）
 # ----------------------------------------------------------------------
 if __name__ == '__main__':
-    serve(app, host='0.0.0.0', port=5001)
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=5001)
