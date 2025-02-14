@@ -216,7 +216,7 @@ def get_auth_headers():
 # ----------------------------------------------------------------------
 # (6) 封装对话接口调用的重试机制
 # ----------------------------------------------------------------------
-def call_completion_endpoint(payload, headers, stream, max_attempts=3):
+def call_completion_endpoint(payload, headers, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         try:
@@ -616,7 +616,7 @@ def chat_completions():
         }
         app.logger.info(f"[chat_completions] -> {DEEPSEEK_COMPLETION_URL}, payload={payload}")
 
-        deepseek_resp = call_completion_endpoint(payload, headers, stream=bool(req_data.get("stream", False)), max_attempts=3)
+        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3)
         if not deepseek_resp:
             return jsonify({"error": "Failed to get completion."}), 500
 
