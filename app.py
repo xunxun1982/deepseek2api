@@ -67,7 +67,6 @@ def save_config(cfg):
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
-        logger.info("[save_config] 配置已写回 config.json")
     except Exception as e:
         logger.error(f"[save_config] 写入 config.json 失败: {e}")
 
@@ -117,7 +116,6 @@ def login_deepseek_via_account(account):
     if not password or (not email and not mobile):
         raise HTTPException(status_code=400, detail="账号缺少必要的登录信息（必须提供 email 或 mobile 以及 password）")
     if email:
-        logger.info(f"[login_deepseek_via_account] 正在使用 email 登录账号：{email}")
         payload = {
             "email": email,
             "mobile": "",
@@ -127,7 +125,6 @@ def login_deepseek_via_account(account):
             "os": "android"
         }
     else:
-        logger.info(f"[login_deepseek_via_account] 正在使用 mobile 登录账号：{mobile}")
         payload = {
             "mobile": mobile,
             "area_code": None,
@@ -159,7 +156,6 @@ def login_deepseek_via_account(account):
     account["token"] = new_token
     save_config(CONFIG)
     identifier = email if email else mobile
-    logger.info(f"[login_deepseek_via_account] 成功登录账号 {identifier}，token: {new_token}")
     return new_token
 
 # ----------------------------------------------------------------------
@@ -173,7 +169,6 @@ def choose_new_account(exclude_ids):
     ]
     if available:
         chosen = random.choice(available)
-        logger.info(f"[choose_new_account] 新选择账号: {get_account_identifier(chosen)}")
         return chosen
     logger.warning("[choose_new_account] 没有可用的账号")
     return None
@@ -206,15 +201,13 @@ def determine_mode_and_token(request: Request):
             except Exception as e:
                 logger.error(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 登录失败：{e}")
                 raise HTTPException(status_code=500, detail="Account login failed.")
-        else:
-            logger.info(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 已有 token，无需重新登录")
+
         request.state.deepseek_token = selected_account.get("token")
         request.state.account = selected_account
-        logger.info(f"[determine_mode_and_token] 配置模式：使用账号 {get_account_identifier(selected_account)} 的 token")
+
     else:
         request.state.use_config_token = False
         request.state.deepseek_token = caller_key
-        logger.info("[determine_mode_and_token] 使用用户自带 DeepSeek token")
 
 def get_auth_headers(request: Request):
     """返回 DeepSeek 请求所需的公共请求头"""
@@ -262,7 +255,7 @@ def create_session(request: Request, max_attempts=3):
             data = {}
         if resp.status_code == 200 and data.get("code") == 0:
             session_id = data["data"]["biz_data"]["id"]
-            logger.info(f"[create_session] 新会话 chat_session_id={session_id}")
+
             resp.close()
             return session_id
         else:
@@ -459,7 +452,6 @@ def get_pow_response(request: Request, max_attempts=3):
 # ----------------------------------------------------------------------
 @app.get("/v1/models")
 def list_models():
-    logger.info("[list_models] 用户请求 /v1/models")
     models_list = [
         {
             "id": "deepseek-chat",
@@ -577,7 +569,6 @@ async def chat_completions(request: Request):
             active_accounts.add(account_id)
 
         req_data = await request.json()
-        logger.info(f"[chat_completions] 收到请求: {req_data}")
         model = req_data.get("model")
         messages = req_data.get("messages", [])
         if not model or not messages:
@@ -606,7 +597,6 @@ async def chat_completions(request: Request):
         pow_resp = get_pow_response(request)
         if not pow_resp:
             raise HTTPException(status_code=401, detail="Failed to get PoW (invalid token or unknown error).")
-        logger.info(f"获取 PoW 成功: {pow_resp}")
         headers = {
             **get_auth_headers(request),
             "x-ds-pow-response": pow_resp
@@ -619,7 +609,7 @@ async def chat_completions(request: Request):
             "thinking_enabled": thinking_enabled,
             "search_enabled": search_enabled
         }
-        logger.info(f"[chat_completions] -> {DEEPSEEK_COMPLETION_URL}, payload={payload}")
+
         deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3)
         if not deepseek_resp:
             raise HTTPException(status_code=500, detail="Failed to get completion.")
@@ -675,7 +665,7 @@ async def chat_completions(request: Request):
                     while True:
                         current_time = time.time()
                         if current_time - last_send_time >= KEEP_ALIVE_TIMEOUT:
-                            logger.info("[sse_stream] 发送保活信号")
+
                             yield ": keep-alive\n\n"
                             last_send_time = current_time
                             continue
@@ -830,8 +820,8 @@ async def chat_completions(request: Request):
                 while True:
                     current_time = time.time()
                     if current_time - last_send_time >= KEEP_ALIVE_TIMEOUT:
-                        logger.info("[chat_completions] 发送保活信号(空行)")
-                        yield '\n'
+
+                        yield ''
                         last_send_time = current_time
                     if not collect_thread.is_alive() and result is not None:
                         yield json.dumps(result)
