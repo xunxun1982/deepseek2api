@@ -177,7 +177,7 @@ def choose_new_account():
         acc_id = get_account_identifier(acc)
         if acc_id:
             # 从队列中移除并返回
-            logger.info(f"[choose_new_account] 新选择账号: {acc_id}")
+            # logger.info(f"[choose_new_account] 新选择账号: {acc_id}")
             return account_queue.pop(i)
             
     logger.warning("[choose_new_account] 没有可用的账号")
