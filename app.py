@@ -205,7 +205,7 @@ def determine_mode_and_token(request: Request):
     if caller_key in config_keys:
         request.state.use_config_token = True
         request.state.tried_accounts = []  # 初始化已尝试账号
-        selected_account = choose_new_account(request.state.tried_accounts)
+        selected_account = choose_new_account()
         if not selected_account:
             raise HTTPException(status_code=500, detail="No accounts configured.")
         if not selected_account.get("token", "").strip():
