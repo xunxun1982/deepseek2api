@@ -729,7 +729,7 @@ async def chat_completions(request: Request):
                     logger.error(f"[sse_stream] 异常: {e}")
                 finally:
                     if getattr(request.state, "use_config_token", False) and hasattr(request.state, "account"):
-                        release_account(account)
+                        release_account(request.state.account)
             
             return StreamingResponse(
                 sse_stream(),
@@ -831,7 +831,7 @@ async def chat_completions(request: Request):
         return JSONResponse(status_code=500, content={"error": "Internal Server Error"})
     finally:
         if getattr(request.state, "use_config_token", False) and hasattr(request.state, "account"):
-            release_account(account)
+            release_account(request.state.account)
 
 # ----------------------------------------------------------------------
 # (11) 路由：/
