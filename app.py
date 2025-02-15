@@ -45,9 +45,6 @@ app.add_middleware(
 # 模板目录（请确保存在 templates/welcome.html 文件）
 templates = Jinja2Templates(directory="templates")
 
-# 全局集合：记录当前正在对话中的账号（以 email 或 phone 标识），保证同一账号同时只进行一个对话
-active_accounts = set()
-
 # ----------------------------------------------------------------------
 # (1) 配置文件的读写函数
 # ----------------------------------------------------------------------
@@ -71,6 +68,17 @@ def save_config(cfg):
         logger.error(f"[save_config] 写入 config.json 失败: {e}")
 
 CONFIG = load_config()
+
+# -------------------------- 全局账号队列 --------------------------
+account_queue = []  # 维护所有可用账号（不在队列中的即为正在使用）
+
+def init_account_queue():
+    """初始化时从配置加载账号"""
+    global account_queue
+    account_queue = CONFIG.get("accounts", [])[:]  # 深拷贝
+    random.shuffle(account_queue)  # 初始随机排序
+
+init_account_queue()
 
 # ----------------------------------------------------------------------
 # (2) DeepSeek 相关常量
@@ -158,17 +166,26 @@ def login_deepseek_via_account(account):
 # ----------------------------------------------------------------------
 # (4) 从 accounts 中随机选择一个未忙且未尝试过的账号
 # ----------------------------------------------------------------------
-def choose_new_account(exclude_ids):
-    accounts = CONFIG.get("accounts", [])
-    available = [
-        acc for acc in accounts
-        if get_account_identifier(acc) not in exclude_ids and get_account_identifier(acc) not in active_accounts
-    ]
-    if available:
-        chosen = random.choice(available)
-        return chosen
+def choose_new_account():
+    """选择策略：
+    1. 遍历队列，找到第一个未被 exclude_ids 包含的账号
+    2. 从队列中移除该账号
+    3. 返回该账号（由后续逻辑保证最终会重新入队）
+    """
+    for i in range(len(account_queue)):
+        acc = account_queue[i]
+        acc_id = get_account_identifier(acc)
+        if acc_id:
+            # 从队列中移除并返回
+            # logger.info(f"[choose_new_account] 新选择账号: {acc_id}")
+            return account_queue.pop(i)
+            
     logger.warning("[choose_new_account] 没有可用的账号")
     return None
+    
+def release_account(account):
+    """将账号重新加入队列末尾"""
+    account_queue.append(account)
 
 # ----------------------------------------------------------------------
 # (5) 判断调用模式：配置模式 vs 用户自带 token
@@ -189,7 +206,7 @@ def determine_mode_and_token(request: Request):
     if caller_key in config_keys:
         request.state.use_config_token = True
         request.state.tried_accounts = []  # 初始化已尝试账号
-        selected_account = choose_new_account(request.state.tried_accounts)
+        selected_account = choose_new_account()
         if not selected_account:
             raise HTTPException(status_code=500, detail="No accounts configured.")
         if not selected_account.get("token", "").strip():
@@ -548,23 +565,6 @@ async def chat_completions(request: Request):
             logger.error(f"[chat_completions] determine_mode_and_token 异常: {exc}")
             return JSONResponse(status_code=500, content={"error": "Account login failed."})
 
-        # 如果使用配置模式，检查账号是否正忙；如果忙则尝试切换账号
-        if getattr(request.state, "use_config_token", False):
-            account_id = get_account_identifier(getattr(request.state, "account", {}))
-            if account_id in active_accounts:
-                request.state.tried_accounts.append(account_id)
-                new_account = choose_new_account(request.state.tried_accounts)
-                if new_account is None:
-                    raise HTTPException(status_code=503, detail="All accounts are busy.")
-                try:
-                    login_deepseek_via_account(new_account)
-                except Exception as e:
-                    raise HTTPException(status_code=500, detail="Account login failed.")
-                request.state.account = new_account
-                request.state.deepseek_token = new_account.get("token")
-                account_id = get_account_identifier(new_account)
-            active_accounts.add(account_id)
-
         req_data = await request.json()
         model = req_data.get("model")
         messages = req_data.get("messages", [])
@@ -730,7 +730,7 @@ async def chat_completions(request: Request):
                     logger.error(f"[sse_stream] 异常: {e}")
                 finally:
                     if getattr(request.state, "use_config_token", False) and hasattr(request.state, "account"):
-                        active_accounts.discard(get_account_identifier(request.state.account))
+                        release_account(request.state.account)
             
             return StreamingResponse(
                 sse_stream(),
@@ -832,7 +832,7 @@ async def chat_completions(request: Request):
         return JSONResponse(status_code=500, content={"error": "Internal Server Error"})
     finally:
         if getattr(request.state, "use_config_token", False) and hasattr(request.state, "account"):
-            active_accounts.discard(get_account_identifier(request.state.account))
+            release_account(request.state.account)
 
 # ----------------------------------------------------------------------
 # (11) 路由：/
