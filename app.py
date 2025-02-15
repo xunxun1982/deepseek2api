@@ -82,15 +82,14 @@ DEEPSEEK_CREATE_POW_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/create_pow_chall
 DEEPSEEK_COMPLETION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/completion"
 BASE_HEADERS = {
     'Host': "chat.deepseek.com",
-    'User-Agent': "DeepSeek/1.0.9 Android/34",
+    'User-Agent': "DeepSeek/1.0.11 Android/35",
     'Accept': "application/json",
     'Accept-Encoding': "gzip",
     'Content-Type': "application/json",
     'x-client-platform': "android",
-    'x-client-version': "1.0.9",
+    'x-client-version': "1.0.11",
     'x-client-locale': "zh_CN",
-    'x-rangers-id': "7883327620434123524",
-    'accept-charset': "UTF-8",
+    'accept-charset': "UTF-8"
 }
 
 # WASM 模块文件路径（请确保文件存在）
@@ -118,9 +117,7 @@ def login_deepseek_via_account(account):
     if email:
         payload = {
             "email": email,
-            "mobile": "",
             "password": password,
-            "area_code": "",
             "device_id": "deepseek_to_api",
             "os": "android"
         }
