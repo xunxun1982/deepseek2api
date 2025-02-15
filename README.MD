@@ -189,6 +189,12 @@ pip install -r requirements.txt
 python app.py
 ```
 
+使用 nohup 启动
+
+```shell
+nohup uvicorn app:app --host 0.0.0.0 --port 5001 > uvicorn.log 2>&1 &
+```
+
 ## 接口列表
 
 目前支持与openai兼容的 `/v1/chat/completions` 接口，可自行使用与openai或其他兼容的客户端接入接口。
