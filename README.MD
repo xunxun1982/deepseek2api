@@ -152,6 +152,9 @@ docker stop deepseek2api
 
 ## Vercel部署
 
+> [!NOTE]
+> Vercel免费账户的请求响应超时时间为10秒，但接口响应通常较久，可能会遇到Vercel返回的504超时错误！
+
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/iidamie/deepseek2api)
 
 部署完后，返回你的 Github 仓库配置 config.json
