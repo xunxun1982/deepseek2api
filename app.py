@@ -642,7 +642,7 @@ async def chat_completions(request: Request):
 
                     def process_data():
                         try:
-                            for raw_line in deepseek_resp.iter_lines(chunk_size=512):
+                            for raw_line in deepseek_resp.iter_lines():
                                 try:
                                     line = raw_line.decode("utf-8")
                                 except Exception as e:
@@ -761,7 +761,7 @@ async def chat_completions(request: Request):
             def collect_data():
                 nonlocal result
                 try:
-                    for raw_line in deepseek_resp.iter_lines(chunk_size=512):
+                    for raw_line in deepseek_resp.iter_lines():
                         try:
                             line = raw_line.decode("utf-8")
                         except Exception as e:
