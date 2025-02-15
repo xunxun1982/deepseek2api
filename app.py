@@ -45,17 +45,6 @@ app.add_middleware(
 # 模板目录（请确保存在 templates/welcome.html 文件）
 templates = Jinja2Templates(directory="templates")
 
-# -------------------------- 全局账号队列 --------------------------
-account_queue = []  # 维护所有可用账号（不在队列中的即为正在使用）
-
-def init_account_queue():
-    """初始化时从配置加载账号"""
-    global account_queue
-    account_queue = CONFIG.get("accounts", [])[:]  # 深拷贝
-    random.shuffle(account_queue)  # 初始随机排序
-
-init_account_queue()
-
 # ----------------------------------------------------------------------
 # (1) 配置文件的读写函数
 # ----------------------------------------------------------------------
@@ -79,6 +68,17 @@ def save_config(cfg):
         logger.error(f"[save_config] 写入 config.json 失败: {e}")
 
 CONFIG = load_config()
+
+# -------------------------- 全局账号队列 --------------------------
+account_queue = []  # 维护所有可用账号（不在队列中的即为正在使用）
+
+def init_account_queue():
+    """初始化时从配置加载账号"""
+    global account_queue
+    account_queue = CONFIG.get("accounts", [])[:]  # 深拷贝
+    random.shuffle(account_queue)  # 初始随机排序
+
+init_account_queue()
 
 # ----------------------------------------------------------------------
 # (2) DeepSeek 相关常量
