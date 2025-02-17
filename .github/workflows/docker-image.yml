@@ -52,7 +52,6 @@ jobs:
   build-and-push:
     needs: semantic-release
     runs-on: ubuntu-latest
-    if: needs.semantic-release.outputs.new_release_published == 'true'
     steps:
       - uses: actions/checkout@v2
 
