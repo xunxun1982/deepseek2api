@@ -842,7 +842,7 @@ def index(request: Request):
     return templates.TemplateResponse("welcome.html", {"request": request})
 
 # ----------------------------------------------------------------------
-# 启动 FastAPI 应用（可用 uvicorn 启动）
+# 启动 FastAPI 应用
 # ----------------------------------------------------------------------
 if __name__ == '__main__':
     import uvicorn
