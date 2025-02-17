@@ -16,7 +16,6 @@ jobs:
   semantic-release:
     runs-on: ubuntu-latest
     outputs:
-      new_version: ${{ steps.semantic.outputs.new_release_version }}
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
     steps:
       - uses: actions/checkout@v2
@@ -24,33 +23,31 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN }}
 
-      - name: Setup Node.js for semantic-release
-        uses: actions/setup-node@v2
-        with:
-          node-version: '18'
-
       - name: Git Configuration
         run: |
           git config --global user.name "iidamie"
           git config --global user.email "iidamie@users.noreply.github.com"
 
-      - name: Install semantic-release
-        run: |
-          npm install -g \
-            semantic-release \
-            @semantic-release/git \
-            @semantic-release/changelog \
-            @semantic-release/exec
-
       - name: Semantic Release
         id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            @semantic-release/exec
+            @semantic-release/git
+            @semantic-release/changelog
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: semantic-release
+
+      - name: Debug Semantic Release Outputs
+        run: |
+          echo "New Version: ${{ steps.semantic.outputs.new_release_version }}"
+          echo "Release Published: ${{ steps.semantic.outputs.new_release_published }}"
 
   build-and-push:
     needs: semantic-release
     runs-on: ubuntu-latest
+    if: ${{ needs.semantic-release.outputs.new_release_published == 'true' }}  
     steps:
       - uses: actions/checkout@v2
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import json
 import base64
 import time
@@ -70,7 +69,7 @@ def save_config(cfg):
 CONFIG = load_config()
 
 # -------------------------- 全局账号队列 --------------------------
-account_queue = []  # 维护所有可用账号（不在队列中的即为正在使用）
+account_queue = []  # 维护所有可用账号
 
 def init_account_queue():
     """初始化时从配置加载账号"""
@@ -462,7 +461,7 @@ def get_pow_response(request: Request, max_attempts=3):
     return None
 
 # ----------------------------------------------------------------------
-# (8) 路由：/v1/models（模拟 OpenAI 模型列表）
+# (8) 路由：/v1/models
 # ----------------------------------------------------------------------
 @app.get("/v1/models")
 def list_models():
@@ -500,7 +499,7 @@ def list_models():
     return JSONResponse(content=data, status_code=200)
 
 # ----------------------------------------------------------------------
-# (新增) 消息预处理函数，将多轮对话合并成最终 prompt
+# 消息预处理函数，将多轮对话合并成最终 prompt
 # ----------------------------------------------------------------------
 def messages_prepare(messages: list) -> str:
     """处理消息列表，合并连续相同角色的消息，并添加角色标签：
@@ -842,7 +841,7 @@ def index(request: Request):
     return templates.TemplateResponse("welcome.html", {"request": request})
 
 # ----------------------------------------------------------------------
-# 启动 FastAPI 应用（可用 uvicorn 启动）
+# 启动 FastAPI 应用
 # ----------------------------------------------------------------------
 if __name__ == '__main__':
     import uvicorn
