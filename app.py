@@ -70,7 +70,7 @@ def save_config(cfg):
 CONFIG = load_config()
 
 # -------------------------- 全局账号队列 --------------------------
-account_queue = []  # 维护所有可用账号（不在队列中的即为正在使用）
+account_queue = []  # 维护所有可用账号
 
 def init_account_queue():
     """初始化时从配置加载账号"""
