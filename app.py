@@ -462,7 +462,7 @@ def get_pow_response(request: Request, max_attempts=3):
     return None
 
 # ----------------------------------------------------------------------
-# (8) 路由：/v1/models（模拟 OpenAI 模型列表）
+# (8) 路由：/v1/models
 # ----------------------------------------------------------------------
 @app.get("/v1/models")
 def list_models():
