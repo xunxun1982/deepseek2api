@@ -42,7 +42,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-# 模板目录（请确保存在 templates/welcome.html 文件）
+# 模板目录
 templates = Jinja2Templates(directory="templates")
 
 # ----------------------------------------------------------------------
