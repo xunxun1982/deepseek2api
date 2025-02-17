@@ -43,9 +43,9 @@ jobs:
 
       - name: Semantic Release
         id: semantic
+        uses: cycjimmy/semantic-release-action@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: semantic-release
 
       - name: Debug Semantic Release Outputs
         run: |
