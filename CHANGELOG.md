@@ -1,3 +1,10 @@
+## [1.2.6-beta.4](https://github.com/iidamie/deepseek2api/compare/v1.2.6-beta.3...v1.2.6-beta.4) (2025-02-17)
+
+
+### Bug Fixes
+
+* 更新 .dockerignore ([b8faf0a](https://github.com/iidamie/deepseek2api/commit/b8faf0ae11c6d315c6f1e0ad4b21e6a0e63d0528))
+
 ## [1.2.6-beta.3](https://github.com/iidamie/deepseek2api/compare/v1.2.6-beta.2...v1.2.6-beta.3) (2025-02-17)
 
 
