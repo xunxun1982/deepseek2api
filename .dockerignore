@@ -4,3 +4,6 @@ docker-compose.yml
 README.MD
 .github
 vercel.json
+.releaserc.json
+CHANGELOG.md
+version.txt
