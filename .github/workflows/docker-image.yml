@@ -48,6 +48,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: semantic-release
 
+      - name: Debug Semantic Release Outputs
+        run: |
+          echo "New Version: ${{ steps.semantic.outputs.new_release_version }}"
+          echo "Release Published: ${{ steps.semantic.outputs.new_release_published }}"
+
   build-and-push:
     needs: semantic-release
     runs-on: ubuntu-latest
