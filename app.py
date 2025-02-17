@@ -100,7 +100,7 @@ BASE_HEADERS = {
     'accept-charset': "UTF-8"
 }
 
-# WASM 模块文件路径（请确保文件存在）
+# WASM 模块文件路径
 WASM_PATH = "sha3_wasm_bg.7b9ca65ddd.wasm"
 
 # ----------------------------------------------------------------------
