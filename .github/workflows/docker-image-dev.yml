@@ -23,6 +23,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN }}
 
+      - name: Git Configuration
+        run: |
+          git config --global user.name "iidamie"
+          git config --global user.email "iidamie@users.noreply.github.com"
+
+
       - name: Semantic Release
         id: semantic
         uses: cycjimmy/semantic-release-action@v4
@@ -33,11 +39,6 @@ jobs:
             @semantic-release/changelog
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Debug Semantic Release Outputs
-        run: |
-          echo "New Version: ${{ steps.semantic.outputs.new_release_version }}"
-          echo "Release Published: ${{ steps.semantic.outputs.new_release_published }}"
 
   build-and-push:
     needs: semantic-release
