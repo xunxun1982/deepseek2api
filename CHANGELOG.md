@@ -1,3 +1,10 @@
+## [1.2.6-beta.2](https://github.com/iidamie/deepseek2api/compare/v1.2.6-beta.1...v1.2.6-beta.2) (2025-02-17)
+
+
+### Bug Fixes
+
+* 更新 app.py ([3bdd442](https://github.com/iidamie/deepseek2api/commit/3bdd442957486298c9bf4950e4d9b519b248a469))
+
 ## [1.2.6-beta.1](https://github.com/iidamie/deepseek2api/compare/v1.2.5...v1.2.6-beta.1) (2025-02-17)
 
 
