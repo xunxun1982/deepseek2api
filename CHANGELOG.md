@@ -1,3 +1,13 @@
+## [1.2.6](https://github.com/iidamie/deepseek2api/compare/v1.2.5...v1.2.6) (2025-02-17)
+
+
+### Bug Fixes
+
+* 更新 .dockerignore ([b8faf0a](https://github.com/iidamie/deepseek2api/commit/b8faf0ae11c6d315c6f1e0ad4b21e6a0e63d0528))
+* 更新 app.py ([b2f181e](https://github.com/iidamie/deepseek2api/commit/b2f181ec02623c50c2bc3eb58c8bec072ab29f18))
+* 更新 app.py ([3bdd442](https://github.com/iidamie/deepseek2api/commit/3bdd442957486298c9bf4950e4d9b519b248a469))
+* 更新 app.py ([faa167f](https://github.com/iidamie/deepseek2api/commit/faa167f29879a2561284c61f0e7e3a5aec3798a8))
+
 ## [1.2.6-beta.4](https://github.com/iidamie/deepseek2api/compare/v1.2.6-beta.3...v1.2.6-beta.4) (2025-02-17)
 
 
