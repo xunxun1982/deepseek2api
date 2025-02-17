@@ -6,6 +6,12 @@ on:
     branches:
       - main
       - dev
+    paths-ignore:
+      - 'README.MD'
+      - 'docker-compose.yml'
+      - '.github/**'
+      - 'vercel.json'
+      - '.gitignore'
 
 jobs:
   semantic-release:
