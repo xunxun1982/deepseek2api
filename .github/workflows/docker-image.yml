@@ -23,11 +23,6 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_TOKEN }}
 
-      - name: Git Configuration
-        run: |
-          git config --global user.name "iidamie"
-          git config --global user.email "iidamie@users.noreply.github.com"
-
       - name: Semantic Release
         id: semantic
         uses: cycjimmy/semantic-release-action@v4
