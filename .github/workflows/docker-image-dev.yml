@@ -16,7 +16,6 @@ jobs:
   semantic-release:
     runs-on: ubuntu-latest
     outputs:
-      new_version: ${{ steps.semantic.outputs.new_release_version }}
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
     steps:
       - uses: actions/checkout@v2
@@ -51,6 +50,7 @@ jobs:
   build-and-push:
     needs: semantic-release
     runs-on: ubuntu-latest
+    if: ${{ needs.semantic-release.outputs.new_release_published == 'true' }}  
     steps:
       - uses: actions/checkout@v2
 
