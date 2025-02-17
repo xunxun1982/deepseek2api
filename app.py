@@ -21,7 +21,7 @@ import transformers
 from wasmtime import Store, Module, Linker
 
 # -------------------------- 初始化 tokenizer --------------------------
-chat_tokenizer_dir = "./"  # 请确保目录下有正确的 tokenizer 配置文件或模型文件
+chat_tokenizer_dir = "./"
 tokenizer = transformers.AutoTokenizer.from_pretrained(chat_tokenizer_dir, trust_remote_code=True)
 
 # -------------------------- 日志配置 --------------------------
