@@ -1,3 +1,10 @@
+## [1.2.7](https://github.com/iidamie/deepseek2api/compare/v1.2.6...v1.2.7) (2025-02-19)
+
+
+### Bug Fixes
+
+* 优化无可用账号时的提示 ([74ced63](https://github.com/iidamie/deepseek2api/commit/74ced639d969b6697afecd6f08ab5213fc9fa9ca))
+
 ## [1.2.6](https://github.com/iidamie/deepseek2api/compare/v1.2.5...v1.2.6) (2025-02-17)
 
 
