@@ -179,7 +179,7 @@ def choose_new_account():
             # logger.info(f"[choose_new_account] 新选择账号: {acc_id}")
             return account_queue.pop(i)
             
-    logger.warning("[choose_new_account] 没有可用的账号")
+    logger.warning("[choose_new_account] 没有可用的账号或所有账号都在使用中")
     return None
     
 def release_account(account):
@@ -207,7 +207,7 @@ def determine_mode_and_token(request: Request):
         request.state.tried_accounts = []  # 初始化已尝试账号
         selected_account = choose_new_account()
         if not selected_account:
-            raise HTTPException(status_code=500, detail="No accounts configured.")
+            raise HTTPException(status_code=500, detail="No accounts configured or all accounts are busy.")
         if not selected_account.get("token", "").strip():
             try:
                 login_deepseek_via_account(selected_account)
