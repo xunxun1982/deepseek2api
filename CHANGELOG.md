@@ -1,3 +1,10 @@
+## [1.2.7-beta.2](https://github.com/iidamie/deepseek2api/compare/v1.2.7-beta.1...v1.2.7-beta.2) (2025-02-20)
+
+
+### Bug Fixes
+
+* 优化 POW 生成机制 ([286f3bd](https://github.com/iidamie/deepseek2api/commit/286f3bdab4ddeed302784dd6c148d72c040d0202))
+
 ## [1.2.7-beta.1](https://github.com/iidamie/deepseek2api/compare/v1.2.6...v1.2.7-beta.1) (2025-02-19)
 
 
