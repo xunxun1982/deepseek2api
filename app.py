@@ -89,12 +89,12 @@ DEEPSEEK_CREATE_POW_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/create_pow_chall
 DEEPSEEK_COMPLETION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/completion"
 BASE_HEADERS = {
     'Host': "chat.deepseek.com",
-    'User-Agent': "DeepSeek/1.0.11 Android/35",
+    'User-Agent': "DeepSeek/1.0.13 Android/35",
     'Accept': "application/json",
     'Accept-Encoding': "gzip",
     'Content-Type': "application/json",
     'x-client-platform': "android",
-    'x-client-version': "1.0.11",
+    'x-client-version': "1.0.13",
     'x-client-locale': "zh_CN",
     'accept-charset': "UTF-8"
 }
@@ -430,7 +430,7 @@ def get_pow_response(request: Request, max_attempts=3):
                 "target_path": challenge["target_path"]
             }
             pow_str = json.dumps(pow_dict, separators=(',', ':'), ensure_ascii=False)
-            encoded = base64.b64encode(pow_str.encode("utf-8")).decode("utf-8").rstrip("=")
+            encoded = base64.b64encode(pow_str.encode("utf-8")).decode("utf-8").rstrip()
             resp.close()
             return encoded
         else:
