@@ -89,12 +89,12 @@ DEEPSEEK_CREATE_POW_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/create_pow_chall
 DEEPSEEK_COMPLETION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/completion"
 BASE_HEADERS = {
     'Host': "chat.deepseek.com",
-    'User-Agent': "DeepSeek/1.0.11 Android/35",
+    'User-Agent': "DeepSeek/1.0.13 Android/35",
     'Accept': "application/json",
     'Accept-Encoding': "gzip",
     'Content-Type': "application/json",
     'x-client-platform': "android",
-    'x-client-version': "1.0.11",
+    'x-client-version': "1.0.13",
     'x-client-locale': "zh_CN",
     'accept-charset': "UTF-8"
 }
@@ -207,7 +207,7 @@ def determine_mode_and_token(request: Request):
         request.state.tried_accounts = []  # 初始化已尝试账号
         selected_account = choose_new_account()
         if not selected_account:
-            raise HTTPException(status_code=500, detail="No accounts configured or all accounts are busy.")
+            raise HTTPException(status_code=429, detail="No accounts configured or all accounts are busy.")
         if not selected_account.get("token", "").strip():
             try:
                 login_deepseek_via_account(selected_account)
@@ -430,7 +430,7 @@ def get_pow_response(request: Request, max_attempts=3):
                 "target_path": challenge["target_path"]
             }
             pow_str = json.dumps(pow_dict, separators=(',', ':'), ensure_ascii=False)
-            encoded = base64.b64encode(pow_str.encode("utf-8")).decode("utf-8").rstrip("=")
+            encoded = base64.b64encode(pow_str.encode("utf-8")).decode("utf-8").rstrip()
             resp.close()
             return encoded
         else:
@@ -633,7 +633,7 @@ async def chat_completions(request: Request):
                                     line = raw_line.decode("utf-8")
                                 except Exception as e:
                                     logger.warning(f"[sse_stream] 解码失败: {e}")
-                                    continue
+                                    raise HTTPException(status_code=500, detail="Server is error.")
                                 if not line:
                                     continue
                                 if line.startswith("data:"):
@@ -652,6 +652,10 @@ async def chat_completions(request: Request):
                                         result_queue.put(chunk)  # 将数据放入队列
                                     except Exception as e:
                                         logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
+                                        raise HTTPException(status_code=500, detail="Server is error.")                 
+                        except Exception as e:
+                            logger.warning(f"[sse_stream] 错误: {e}")
+                            raise HTTPException(status_code=500, detail="Server is error.")
                         finally:
                             deepseek_resp.close()
 
@@ -752,7 +756,7 @@ async def chat_completions(request: Request):
                             line = raw_line.decode("utf-8")
                         except Exception as e:
                             logger.warning(f"[chat_completions] 解码失败: {e}")
-                            continue
+                            raise HTTPException(status_code=500, detail="Server is error.") 
                         if not line:
                             continue
                         if line.startswith("data:"):
@@ -778,8 +782,11 @@ async def chat_completions(request: Request):
                                     elif ctype == "text":
                                         text_list.append(ctext)
                             except Exception as e:
-                                logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
-                                continue
+                                logger.warning(f"[collect_data] 无法解析: {data_str}, 错误: {e}")
+                                raise HTTPException(status_code=500, detail="Server is error.")
+                except Exception as e:
+                    logger.warning(f"[collect_data] 错误: {e}")
+                    raise HTTPException(status_code=500, detail="Server is error.")
                 finally:
                     deepseek_resp.close()
                     final_reasoning = "".join(think_list)
