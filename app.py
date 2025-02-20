@@ -207,7 +207,7 @@ def determine_mode_and_token(request: Request):
         request.state.tried_accounts = []  # 初始化已尝试账号
         selected_account = choose_new_account()
         if not selected_account:
-            raise HTTPException(status_code=500, detail="No accounts configured or all accounts are busy.")
+            raise HTTPException(status_code=429, detail="No accounts configured or all accounts are busy.")
         if not selected_account.get("token", "").strip():
             try:
                 login_deepseek_via_account(selected_account)
@@ -652,6 +652,13 @@ async def chat_completions(request: Request):
                                         result_queue.put(chunk)  # 将数据放入队列
                                     except Exception as e:
                                         logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
+                                        raise HTTPException(status_code=500, detail="Server is error.")
+                                except Exception as e:
+                                    logger.warning(f"[sse_stream] 错误: {e}")
+                                    raise HTTPException(status_code=500, detail="Server is error.")
+                        except Exception as e:
+                            logger.warning(f"[sse_stream] 错误: {e}")
+                            raise HTTPException(status_code=500, detail="Server is error.")
                         finally:
                             deepseek_resp.close()
 
@@ -778,8 +785,14 @@ async def chat_completions(request: Request):
                                     elif ctype == "text":
                                         text_list.append(ctext)
                             except Exception as e:
-                                logger.warning(f"[chat_completions] 无法解析: {data_str}, 错误: {e}")
-                                continue
+                                logger.warning(f"[collect_data] 无法解析: {data_str}, 错误: {e}")
+                                raise HTTPException(status_code=500, detail="Server is error.")
+                        except Exception as e:
+                            logger.warning(f"[collect_data] 错误: {e}")
+                            raise HTTPException(status_code=500, detail="Server is error.") 
+                except Exception as e:
+                    logger.warning(f"[collect_data] 错误: {e}")
+                    raise HTTPException(status_code=500, detail="Server is error.")
                 finally:
                     deepseek_resp.close()
                     final_reasoning = "".join(think_list)
