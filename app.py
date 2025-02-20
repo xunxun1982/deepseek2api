@@ -633,7 +633,7 @@ async def chat_completions(request: Request):
                                     line = raw_line.decode("utf-8")
                                 except Exception as e:
                                     logger.warning(f"[sse_stream] 解码失败: {e}")
-                                    continue
+                                    raise HTTPException(status_code=500, detail="Server is error.")
                                 if not line:
                                     continue
                                 if line.startswith("data:"):
@@ -652,10 +652,7 @@ async def chat_completions(request: Request):
                                         result_queue.put(chunk)  # 将数据放入队列
                                     except Exception as e:
                                         logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
-                                        raise HTTPException(status_code=500, detail="Server is error.")
-                                except Exception as e:
-                                    logger.warning(f"[sse_stream] 错误: {e}")
-                                    raise HTTPException(status_code=500, detail="Server is error.")
+                                        raise HTTPException(status_code=500, detail="Server is error.")                 
                         except Exception as e:
                             logger.warning(f"[sse_stream] 错误: {e}")
                             raise HTTPException(status_code=500, detail="Server is error.")
