@@ -1,3 +1,13 @@
+## [1.2.8](https://github.com/iidamie/deepseek2api/compare/v1.2.7...v1.2.8) (2025-02-20)
+
+
+### Bug Fixes
+
+* 优化 POW 生成机制 ([286f3bd](https://github.com/iidamie/deepseek2api/commit/286f3bdab4ddeed302784dd6c148d72c040d0202))
+* 优化异常处理 ([66ce0ae](https://github.com/iidamie/deepseek2api/commit/66ce0ae9c02af83fe256e6d01821980be4ba2304))
+* 优化异常处理 ([755b20f](https://github.com/iidamie/deepseek2api/commit/755b20f59ceaa70182db24024d1118e16c24de73))
+* 优化异常处理 ([ef9073b](https://github.com/iidamie/deepseek2api/commit/ef9073b6c8a57b84902705780ca54f52746b6a21))
+
 ## [1.2.8-beta.1](https://github.com/iidamie/deepseek2api/compare/v1.2.7...v1.2.8-beta.1) (2025-02-20)
 
 
