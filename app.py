@@ -756,7 +756,7 @@ async def chat_completions(request: Request):
                             line = raw_line.decode("utf-8")
                         except Exception as e:
                             logger.warning(f"[chat_completions] 解码失败: {e}")
-                            continue
+                            raise HTTPException(status_code=500, detail="Server is error.") 
                         if not line:
                             continue
                         if line.startswith("data:"):
@@ -784,9 +784,6 @@ async def chat_completions(request: Request):
                             except Exception as e:
                                 logger.warning(f"[collect_data] 无法解析: {data_str}, 错误: {e}")
                                 raise HTTPException(status_code=500, detail="Server is error.")
-                        except Exception as e:
-                            logger.warning(f"[collect_data] 错误: {e}")
-                            raise HTTPException(status_code=500, detail="Server is error.") 
                 except Exception as e:
                     logger.warning(f"[collect_data] 错误: {e}")
                     raise HTTPException(status_code=500, detail="Server is error.")
