@@ -1,3 +1,16 @@
+# [1.3.0](https://github.com/iidamie/deepseek2api/compare/v1.2.8...v1.3.0) (2025-02-21)
+
+
+### Bug Fixes
+
+* Fixed bug. ([9e5f534](https://github.com/iidamie/deepseek2api/commit/9e5f5349785452df2c99170c701240fcc6c779ba))
+* 清理无用代码 ([afefb3e](https://github.com/iidamie/deepseek2api/commit/afefb3e685564550a3871454da821ded28626bae))
+
+
+### Features
+
+* 添加对 finish_reason 的判断 ([29bd5b1](https://github.com/iidamie/deepseek2api/commit/29bd5b11caf27a59a0ccf073538669e107050fbe))
+
 ## [1.2.8](https://github.com/iidamie/deepseek2api/compare/v1.2.7...v1.2.8) (2025-02-20)
 
 
