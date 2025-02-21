@@ -744,7 +744,9 @@ async def chat_completions(request: Request):
                                             .get("finish_reason")
                                             == "backend_busy"
                                         ):
-                                            result_queue.put("{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":1740044575,"message_id":-1,"parent_id":-1}")
+                                            busy_content_str = '{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":0,"message_id":-1,"parent_id":-1}'
+                                            busy_content = json.loads(busy_content_str)
+                                            result_queue.put(busy_content)
                                             result_queue.put(None)
                                         result_queue.put(chunk)  # 将数据放入队列
                                     except Exception as e:
