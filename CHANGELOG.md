@@ -1,3 +1,10 @@
+# [1.3.0-beta.2](https://github.com/iidamie/deepseek2api/compare/v1.3.0-beta.1...v1.3.0-beta.2) (2025-02-21)
+
+
+### Bug Fixes
+
+* Fixed bug. ([9e5f534](https://github.com/iidamie/deepseek2api/commit/9e5f5349785452df2c99170c701240fcc6c779ba))
+
 # [1.3.0-beta.1](https://github.com/iidamie/deepseek2api/compare/v1.2.8-beta.1...v1.3.0-beta.1) (2025-02-21)
 
 
