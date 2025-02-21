@@ -1,32 +1,32 @@
-import json
 import base64
-import time
+import ctypes
+import json
 import logging
-import random
 import os
+import queue
+import random
 import re
 import struct
-import ctypes
 import threading
-import queue
+import time
 
-from curl_cffi import requests
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.templating import Jinja2Templates
 import transformers
-
-from wasmtime import Store, Module, Linker
+from curl_cffi import requests
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
+from wasmtime import Linker, Module, Store
 
 # -------------------------- 初始化 tokenizer --------------------------
 chat_tokenizer_dir = "./"
-tokenizer = transformers.AutoTokenizer.from_pretrained(chat_tokenizer_dir, trust_remote_code=True)
+tokenizer = transformers.AutoTokenizer.from_pretrained(
+    chat_tokenizer_dir, trust_remote_code=True
+)
 
 # -------------------------- 日志配置 --------------------------
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("main")
 
@@ -49,6 +49,7 @@ templates = Jinja2Templates(directory="templates")
 # ----------------------------------------------------------------------
 CONFIG_PATH = "config.json"
 
+
 def load_config():
     """从 config.json 加载配置，出错则返回空 dict"""
     try:
@@ -58,6 +59,7 @@ def load_config():
         logger.warning(f"[load_config] 无法读取配置文件: {e}")
         return {}
 
+
 def save_config(cfg):
     """将配置写回 config.json"""
     try:
@@ -66,16 +68,19 @@ def save_config(cfg):
     except Exception as e:
         logger.error(f"[save_config] 写入 config.json 失败: {e}")
 
+
 CONFIG = load_config()
 
 # -------------------------- 全局账号队列 --------------------------
 account_queue = []  # 维护所有可用账号
+
 
 def init_account_queue():
     """初始化时从配置加载账号"""
     global account_queue
     account_queue = CONFIG.get("accounts", [])[:]  # 深拷贝
     random.shuffle(account_queue)  # 初始随机排序
+
 
 init_account_queue()
 
@@ -88,19 +93,20 @@ DEEPSEEK_CREATE_SESSION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat_session/crea
 DEEPSEEK_CREATE_POW_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/create_pow_challenge"
 DEEPSEEK_COMPLETION_URL = f"https://{DEEPSEEK_HOST}/api/v0/chat/completion"
 BASE_HEADERS = {
-    'Host': "chat.deepseek.com",
-    'User-Agent': "DeepSeek/1.0.13 Android/35",
-    'Accept': "application/json",
-    'Accept-Encoding': "gzip",
-    'Content-Type': "application/json",
-    'x-client-platform': "android",
-    'x-client-version': "1.0.13",
-    'x-client-locale': "zh_CN",
-    'accept-charset': "UTF-8"
+    "Host": "chat.deepseek.com",
+    "User-Agent": "DeepSeek/1.0.13 Android/35",
+    "Accept": "application/json",
+    "Accept-Encoding": "gzip",
+    "Content-Type": "application/json",
+    "x-client-platform": "android",
+    "x-client-version": "1.0.13",
+    "x-client-locale": "zh_CN",
+    "accept-charset": "UTF-8",
 }
 
 # WASM 模块文件路径
 WASM_PATH = "sha3_wasm_bg.7b9ca65ddd.wasm"
+
 
 # ----------------------------------------------------------------------
 # 辅助函数：获取账号唯一标识（优先 email，否则 mobile）
@@ -108,6 +114,7 @@ WASM_PATH = "sha3_wasm_bg.7b9ca65ddd.wasm"
 def get_account_identifier(account):
     """返回账号的唯一标识，优先使用 email，否则使用 mobile"""
     return account.get("email", "").strip() or account.get("mobile", "").strip()
+
 
 # ----------------------------------------------------------------------
 # (3) 登录函数：支持使用 email 或 mobile 登录
@@ -120,13 +127,16 @@ def login_deepseek_via_account(account):
     mobile = account.get("mobile", "").strip()
     password = account.get("password", "").strip()
     if not password or (not email and not mobile):
-        raise HTTPException(status_code=400, detail="账号缺少必要的登录信息（必须提供 email 或 mobile 以及 password）")
+        raise HTTPException(
+            status_code=400,
+            detail="账号缺少必要的登录信息（必须提供 email 或 mobile 以及 password）",
+        )
     if email:
         payload = {
             "email": email,
             "password": password,
             "device_id": "deepseek_to_api",
-            "os": "android"
+            "os": "android",
         }
     else:
         payload = {
@@ -134,7 +144,7 @@ def login_deepseek_via_account(account):
             "area_code": None,
             "password": password,
             "device_id": "deepseek_to_api",
-            "os": "android"
+            "os": "android",
         }
     try:
         resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
@@ -146,21 +156,30 @@ def login_deepseek_via_account(account):
         data = resp.json()
     except Exception as e:
         logger.error(f"[login_deepseek_via_account] JSON解析失败: {e}")
-        raise HTTPException(status_code=500, detail="Account login failed: invalid JSON response")
+        raise HTTPException(
+            status_code=500, detail="Account login failed: invalid JSON response"
+        )
     # 校验响应数据格式是否正确
-    if (data.get("data") is None or 
-        data["data"].get("biz_data") is None or 
-        data["data"]["biz_data"].get("user") is None):
+    if (
+        data.get("data") is None
+        or data["data"].get("biz_data") is None
+        or data["data"]["biz_data"].get("user") is None
+    ):
         logger.error(f"[login_deepseek_via_account] 登录响应格式错误: {data}")
-        raise HTTPException(status_code=500, detail="Account login failed: invalid response format")
+        raise HTTPException(
+            status_code=500, detail="Account login failed: invalid response format"
+        )
     new_token = data["data"]["biz_data"]["user"].get("token")
     if not new_token:
         logger.error(f"[login_deepseek_via_account] 登录响应中缺少 token: {data}")
-        raise HTTPException(status_code=500, detail="Account login failed: missing token")
+        raise HTTPException(
+            status_code=500, detail="Account login failed: missing token"
+        )
     account["token"] = new_token
     save_config(CONFIG)
     identifier = email if email else mobile
     return new_token
+
 
 # ----------------------------------------------------------------------
 # (4) 从 accounts 中随机选择一个未忙且未尝试过的账号
@@ -178,13 +197,15 @@ def choose_new_account():
             # 从队列中移除并返回
             # logger.info(f"[choose_new_account] 新选择账号: {acc_id}")
             return account_queue.pop(i)
-            
+
     logger.warning("[choose_new_account] 没有可用的账号或所有账号都在使用中")
     return None
-    
+
+
 def release_account(account):
     """将账号重新加入队列末尾"""
     account_queue.append(account)
+
 
 # ----------------------------------------------------------------------
 # (5) 判断调用模式：配置模式 vs 用户自带 token
@@ -199,7 +220,9 @@ def determine_mode_and_token(request: Request):
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Unauthorized: missing Bearer token.")
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: missing Bearer token."
+        )
     caller_key = auth_header.replace("Bearer ", "", 1).strip()
     config_keys = CONFIG.get("keys", [])
     if caller_key in config_keys:
@@ -207,12 +230,17 @@ def determine_mode_and_token(request: Request):
         request.state.tried_accounts = []  # 初始化已尝试账号
         selected_account = choose_new_account()
         if not selected_account:
-            raise HTTPException(status_code=429, detail="No accounts configured or all accounts are busy.")
+            raise HTTPException(
+                status_code=429,
+                detail="No accounts configured or all accounts are busy.",
+            )
         if not selected_account.get("token", "").strip():
             try:
                 login_deepseek_via_account(selected_account)
             except Exception as e:
-                logger.error(f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 登录失败：{e}")
+                logger.error(
+                    f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 登录失败：{e}"
+                )
                 raise HTTPException(status_code=500, detail="Account login failed.")
 
         request.state.deepseek_token = selected_account.get("token")
@@ -222,9 +250,11 @@ def determine_mode_and_token(request: Request):
         request.state.use_config_token = False
         request.state.deepseek_token = caller_key
 
+
 def get_auth_headers(request: Request):
     """返回 DeepSeek 请求所需的公共请求头"""
-    return { **BASE_HEADERS, "authorization": f"Bearer {request.state.deepseek_token}" }
+    return {**BASE_HEADERS, "authorization": f"Bearer {request.state.deepseek_token}"}
+
 
 # ----------------------------------------------------------------------
 # (6) 封装对话接口调用的重试机制
@@ -233,7 +263,9 @@ def call_completion_endpoint(payload, headers, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         try:
-            deepseek_resp = requests.post(DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True)
+            deepseek_resp = requests.post(
+                DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True
+            )
         except Exception as e:
             logger.warning(f"[call_completion_endpoint] 请求异常: {e}")
             time.sleep(1)
@@ -242,11 +274,14 @@ def call_completion_endpoint(payload, headers, max_attempts=3):
         if deepseek_resp.status_code == 200:
             return deepseek_resp
         else:
-            logger.warning(f"[call_completion_endpoint] 调用对话接口失败, 状态码: {deepseek_resp.status_code}")
+            logger.warning(
+                f"[call_completion_endpoint] 调用对话接口失败, 状态码: {deepseek_resp.status_code}"
+            )
             deepseek_resp.close()
             time.sleep(1)
             attempts += 1
     return None
+
 
 # ----------------------------------------------------------------------
 # (7) 创建会话 & 获取 PoW（重试时，配置模式下错误会切换账号；用户自带 token 模式下仅重试）
@@ -256,7 +291,9 @@ def create_session(request: Request, max_attempts=3):
     while attempts < max_attempts:
         headers = get_auth_headers(request)
         try:
-            resp = requests.post(DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"})
+            resp = requests.post(
+                DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"}
+            )
         except Exception as e:
             logger.error(f"[create_session] 请求异常: {e}")
             attempts += 1
@@ -273,11 +310,13 @@ def create_session(request: Request, max_attempts=3):
             return session_id
         else:
             code = data.get("code")
-            logger.warning(f"[create_session] 创建会话失败, code={code}, msg={data.get('msg')}")
+            logger.warning(
+                f"[create_session] 创建会话失败, code={code}, msg={data.get('msg')}"
+            )
             resp.close()
             if request.state.use_config_token:
                 current_id = get_account_identifier(request.state.account)
-                if not hasattr(request.state, 'tried_accounts'):
+                if not hasattr(request.state, "tried_accounts"):
                     request.state.tried_accounts = []
                 if current_id not in request.state.tried_accounts:
                     request.state.tried_accounts.append(current_id)
@@ -287,7 +326,9 @@ def create_session(request: Request, max_attempts=3):
                 try:
                     login_deepseek_via_account(new_account)
                 except Exception as e:
-                    logger.error(f"[create_session] 账号 {get_account_identifier(new_account)} 登录失败：{e}")
+                    logger.error(
+                        f"[create_session] 账号 {get_account_identifier(new_account)} 登录失败：{e}"
+                    )
                     attempts += 1
                     continue
                 request.state.account = new_account
@@ -298,17 +339,20 @@ def create_session(request: Request, max_attempts=3):
         attempts += 1
     return None
 
+
 # ----------------------------------------------------------------------
 # (7.1) 使用 WASM 模块计算 PoW 答案的辅助函数
 # ----------------------------------------------------------------------
-def compute_pow_answer(algorithm: str,
-                       challenge_str: str,
-                       salt: str,
-                       difficulty: int,
-                       expire_at: int,
-                       signature: str,
-                       target_path: str,
-                       wasm_path: str) -> int:
+def compute_pow_answer(
+    algorithm: str,
+    challenge_str: str,
+    salt: str,
+    difficulty: int,
+    expire_at: int,
+    signature: str,
+    target_path: str,
+    wasm_path: str,
+) -> int:
     """
     使用 WASM 模块计算 DeepSeekHash 答案（answer）。
     根据 JS 逻辑：
@@ -362,7 +406,15 @@ def compute_pow_answer(algorithm: str,
     ptr_challenge, len_challenge = encode_string(challenge_str)
     ptr_prefix, len_prefix = encode_string(prefix)
     # 3. 调用 wasm_solve（注意：difficulty 以 float 形式传入）
-    wasm_solve(store, retptr, ptr_challenge, len_challenge, ptr_prefix, len_prefix, float(difficulty))
+    wasm_solve(
+        store,
+        retptr,
+        ptr_challenge,
+        len_challenge,
+        ptr_prefix,
+        len_prefix,
+        float(difficulty),
+    )
     # 4. 从 retptr 处读取 4 字节状态和 8 字节求解结果
     status_bytes = read_memory(retptr, 4)
     if len(status_bytes) != 4:
@@ -380,6 +432,7 @@ def compute_pow_answer(algorithm: str,
         return None
     return int(value)
 
+
 # ----------------------------------------------------------------------
 # (7.2) 获取 PoW 响应，融合计算 answer 逻辑
 # ----------------------------------------------------------------------
@@ -388,7 +441,12 @@ def get_pow_response(request: Request, max_attempts=3):
     while attempts < max_attempts:
         headers = get_auth_headers(request)
         try:
-            resp = requests.post(DEEPSEEK_CREATE_POW_URL, headers=headers, json={"target_path": "/api/v0/chat/completion"}, timeout=30)
+            resp = requests.post(
+                DEEPSEEK_CREATE_POW_URL,
+                headers=headers,
+                json={"target_path": "/api/v0/chat/completion"},
+                timeout=30,
+            )
         except Exception as e:
             logger.error(f"[get_pow_response] 请求异常: {e}")
             attempts += 1
@@ -411,7 +469,7 @@ def get_pow_response(request: Request, max_attempts=3):
                     expire_at,
                     challenge["signature"],
                     challenge["target_path"],
-                    WASM_PATH
+                    WASM_PATH,
                 )
             except Exception as e:
                 logger.error(f"[get_pow_response] PoW 答案计算异常: {e}")
@@ -427,19 +485,21 @@ def get_pow_response(request: Request, max_attempts=3):
                 "salt": challenge["salt"],
                 "answer": answer,  # 整数形式答案
                 "signature": challenge["signature"],
-                "target_path": challenge["target_path"]
+                "target_path": challenge["target_path"],
             }
-            pow_str = json.dumps(pow_dict, separators=(',', ':'), ensure_ascii=False)
+            pow_str = json.dumps(pow_dict, separators=(",", ":"), ensure_ascii=False)
             encoded = base64.b64encode(pow_str.encode("utf-8")).decode("utf-8").rstrip()
             resp.close()
             return encoded
         else:
             code = data.get("code")
-            logger.warning(f"[get_pow_response] 获取 PoW 失败, code={code}, msg={data.get('msg')}")
+            logger.warning(
+                f"[get_pow_response] 获取 PoW 失败, code={code}, msg={data.get('msg')}"
+            )
             resp.close()
             if request.state.use_config_token:
                 current_id = get_account_identifier(request.state.account)
-                if not hasattr(request.state, 'tried_accounts'):
+                if not hasattr(request.state, "tried_accounts"):
                     request.state.tried_accounts = []
                 if current_id not in request.state.tried_accounts:
                     request.state.tried_accounts.append(current_id)
@@ -449,7 +509,9 @@ def get_pow_response(request: Request, max_attempts=3):
                 try:
                     login_deepseek_via_account(new_account)
                 except Exception as e:
-                    logger.error(f"[get_pow_response] 账号 {get_account_identifier(new_account)} 登录失败：{e}")
+                    logger.error(
+                        f"[get_pow_response] 账号 {get_account_identifier(new_account)} 登录失败：{e}"
+                    )
                     attempts += 1
                     continue
                 request.state.account = new_account
@@ -459,6 +521,7 @@ def get_pow_response(request: Request, max_attempts=3):
                 continue
             attempts += 1
     return None
+
 
 # ----------------------------------------------------------------------
 # (8) 路由：/v1/models
@@ -471,32 +534,33 @@ def list_models():
             "object": "model",
             "created": 1677610602,
             "owned_by": "deepseek",
-            "permission": []
+            "permission": [],
         },
         {
             "id": "deepseek-reasoner",
             "object": "model",
             "created": 1677610602,
             "owned_by": "deepseek",
-            "permission": []
+            "permission": [],
         },
         {
             "id": "deepseek-chat-search",
             "object": "model",
             "created": 1677610602,
             "owned_by": "deepseek",
-            "permission": []
+            "permission": [],
         },
         {
             "id": "deepseek-reasoner-search",
             "object": "model",
             "created": 1677610602,
             "owned_by": "deepseek",
-            "permission": []
-        }
+            "permission": [],
+        },
     ]
     data = {"object": "list", "data": models_list}
     return JSONResponse(content=data, status_code=200)
+
 
 # ----------------------------------------------------------------------
 # 消息预处理函数，将多轮对话合并成最终 prompt
@@ -513,7 +577,9 @@ def messages_prepare(messages: list) -> str:
         role = m.get("role", "")
         content = m.get("content", "")
         if isinstance(content, list):
-            texts = [item.get("text", "") for item in content if item.get("type") == "text"]
+            texts = [
+                item.get("text", "") for item in content if item.get("type") == "text"
+            ]
             text = "\n".join(texts)
         else:
             text = str(content)
@@ -546,8 +612,10 @@ def messages_prepare(messages: list) -> str:
     final_prompt = re.sub(r"!", "", final_prompt)
     return final_prompt
 
+
 # 添加保活超时配置（5秒）
 KEEP_ALIVE_TIMEOUT = 5
+
 
 # ----------------------------------------------------------------------
 # (10) 路由：/v1/chat/completions
@@ -559,16 +627,22 @@ async def chat_completions(request: Request):
         try:
             determine_mode_and_token(request)
         except HTTPException as exc:
-            return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+            return JSONResponse(
+                status_code=exc.status_code, content={"error": exc.detail}
+            )
         except Exception as exc:
             logger.error(f"[chat_completions] determine_mode_and_token 异常: {exc}")
-            return JSONResponse(status_code=500, content={"error": "Account login failed."})
+            return JSONResponse(
+                status_code=500, content={"error": "Account login failed."}
+            )
 
         req_data = await request.json()
         model = req_data.get("model")
         messages = req_data.get("messages", [])
         if not model or not messages:
-            raise HTTPException(status_code=400, detail="Request must include 'model' and 'messages'.")
+            raise HTTPException(
+                status_code=400, detail="Request must include 'model' and 'messages'."
+            )
         # 判断是否启用"思考"或"搜索"功能（这里根据模型名称判断）
         model_lower = model.lower()
         if model_lower in ["deepseek-v3", "deepseek-chat"]:
@@ -584,7 +658,9 @@ async def chat_completions(request: Request):
             thinking_enabled = True
             search_enabled = True
         else:
-            raise HTTPException(status_code=503, detail=f"Model '{model}' is not available.")
+            raise HTTPException(
+                status_code=503, detail=f"Model '{model}' is not available."
+            )
         # 使用 messages_prepare 函数构造最终 prompt
         final_prompt = messages_prepare(messages)
         session_id = create_session(request)
@@ -592,18 +668,18 @@ async def chat_completions(request: Request):
             raise HTTPException(status_code=401, detail="invalid token.")
         pow_resp = get_pow_response(request)
         if not pow_resp:
-            raise HTTPException(status_code=401, detail="Failed to get PoW (invalid token or unknown error).")
-        headers = {
-            **get_auth_headers(request),
-            "x-ds-pow-response": pow_resp
-        }
+            raise HTTPException(
+                status_code=401,
+                detail="Failed to get PoW (invalid token or unknown error).",
+            )
+        headers = {**get_auth_headers(request), "x-ds-pow-response": pow_resp}
         payload = {
             "chat_session_id": session_id,
             "parent_message_id": None,
             "prompt": final_prompt,
             "ref_file_ids": [],
             "thinking_enabled": thinking_enabled,
-            "search_enabled": search_enabled
+            "search_enabled": search_enabled,
         }
 
         deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3)
@@ -616,7 +692,10 @@ async def chat_completions(request: Request):
         if bool(req_data.get("stream", False)):
             if deepseek_resp.status_code != 200:
                 deepseek_resp.close()
-                return JSONResponse(content=deepseek_resp.content, status_code=deepseek_resp.status_code)
+                return JSONResponse(
+                    content=deepseek_resp.content, status_code=deepseek_resp.status_code
+                )
+
             def sse_stream():
                 try:
                     final_text = ""
@@ -633,7 +712,9 @@ async def chat_completions(request: Request):
                                     line = raw_line.decode("utf-8")
                                 except Exception as e:
                                     logger.warning(f"[sse_stream] 解码失败: {e}")
-                                    raise HTTPException(status_code=500, detail="Server is error.")
+                                    raise HTTPException(
+                                        status_code=500, detail="Server is error."
+                                    )
                                 if not line:
                                     continue
                                 if line.startswith("data:"):
@@ -644,18 +725,40 @@ async def chat_completions(request: Request):
                                     try:
                                         chunk = json.loads(data_str)
                                         # 处理搜索索引数据
-                                        if chunk.get("choices", [{}])[0].get("delta", {}).get("type") == "search_index":
-                                            search_indexes = chunk["choices"][0]["delta"].get("search_indexes", [])
+                                        if (
+                                            chunk.get("choices", [{}])[0]
+                                            .get("delta", {})
+                                            .get("type")
+                                            == "search_index"
+                                        ):
+                                            search_indexes = chunk["choices"][0][
+                                                "delta"
+                                            ].get("search_indexes", [])
                                             for idx in search_indexes:
-                                                citation_map[str(idx.get("cite_index"))] = idx.get("url", "")
+                                                citation_map[
+                                                    str(idx.get("cite_index"))
+                                                ] = idx.get("url", "")
                                             continue
+                                        if (
+                                            chunk.get("choices", [{}])[0]
+                                            .get("finish_reason")
+                                            == "backend_busy"
+                                        ):
+                                            result_queue.put("{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":1740044575,"message_id":-1,"parent_id":-1}")
+                                            result_queue.put(None)
                                         result_queue.put(chunk)  # 将数据放入队列
                                     except Exception as e:
-                                        logger.warning(f"[sse_stream] 无法解析: {data_str}, 错误: {e}")
-                                        raise HTTPException(status_code=500, detail="Server is error.")                 
+                                        logger.warning(
+                                            f"[sse_stream] 无法解析: {data_str}, 错误: {e}"
+                                        )
+                                        raise HTTPException(
+                                            status_code=500, detail="Server is error."
+                                        )
                         except Exception as e:
                             logger.warning(f"[sse_stream] 错误: {e}")
-                            raise HTTPException(status_code=500, detail="Server is error.")
+                            raise HTTPException(
+                                status_code=500, detail="Server is error."
+                            )
                         finally:
                             deepseek_resp.close()
 
@@ -678,7 +781,7 @@ async def chat_completions(request: Request):
                                 usage = {
                                     "prompt_tokens": prompt_tokens,
                                     "completion_tokens": completion_tokens,
-                                    "total_tokens": prompt_tokens + completion_tokens
+                                    "total_tokens": prompt_tokens + completion_tokens,
                                 }
                                 finish_chunk = {
                                     "id": completion_id,
@@ -686,9 +789,13 @@ async def chat_completions(request: Request):
                                     "created": created_time,
                                     "model": model,
                                     "choices": [
-                                        {"delta": {}, "index": 0, "finish_reason": "stop"}
+                                        {
+                                            "delta": {},
+                                            "index": 0,
+                                            "finish_reason": "stop",
+                                        }
                                     ],
-                                    "usage": usage
+                                    "usage": usage,
                                 }
                                 yield f"data: {json.dumps(finish_chunk, ensure_ascii=False)}\n\n"
                                 yield "data: [DONE]\n\n"
@@ -716,14 +823,19 @@ async def chat_completions(request: Request):
                                 elif ctype == "text":
                                     delta_obj["content"] = ctext
                                 if delta_obj:
-                                    new_choices.append({"delta": delta_obj, "index": choice.get("index", 0)})
+                                    new_choices.append(
+                                        {
+                                            "delta": delta_obj,
+                                            "index": choice.get("index", 0),
+                                        }
+                                    )
                             if new_choices:
                                 out_chunk = {
                                     "id": completion_id,
                                     "object": "chat.completion.chunk",
                                     "created": created_time,
                                     "model": model,
-                                    "choices": new_choices
+                                    "choices": new_choices,
                                 }
                                 yield f"data: {json.dumps(out_chunk, ensure_ascii=False)}\n\n"
                                 last_send_time = current_time
@@ -732,13 +844,15 @@ async def chat_completions(request: Request):
                 except Exception as e:
                     logger.error(f"[sse_stream] 异常: {e}")
                 finally:
-                    if getattr(request.state, "use_config_token", False) and hasattr(request.state, "account"):
+                    if getattr(request.state, "use_config_token", False) and hasattr(
+                        request.state, "account"
+                    ):
                         release_account(request.state.account)
-            
+
             return StreamingResponse(
                 sse_stream(),
                 media_type="text/event-stream",
-                headers={"Content-Type": "text/event-stream"}
+                headers={"Content-Type": "text/event-stream"},
             )
         else:
             # 非流式响应处理
@@ -748,6 +862,7 @@ async def chat_completions(request: Request):
             citation_map = {}
 
             data_queue = queue.Queue()
+
             def collect_data():
                 nonlocal result
                 try:
@@ -756,7 +871,9 @@ async def chat_completions(request: Request):
                             line = raw_line.decode("utf-8")
                         except Exception as e:
                             logger.warning(f"[chat_completions] 解码失败: {e}")
-                            raise HTTPException(status_code=500, detail="Server is error.") 
+                            raise HTTPException(
+                                status_code=500, detail="Server is error."
+                            )
                         if not line:
                             continue
                         if line.startswith("data:"):
@@ -766,24 +883,39 @@ async def chat_completions(request: Request):
                                 break
                             try:
                                 chunk = json.loads(data_str)
-                                if chunk.get("choices", [{}])[0].get("delta", {}).get("type") == "search_index":
-                                    search_indexes = chunk["choices"][0]["delta"].get("search_indexes", [])
+                                if (
+                                    chunk.get("choices", [{}])[0]
+                                    .get("delta", {})
+                                    .get("type")
+                                    == "search_index"
+                                ):
+                                    search_indexes = chunk["choices"][0]["delta"].get(
+                                        "search_indexes", []
+                                    )
                                     for idx in search_indexes:
-                                        citation_map[str(idx.get("cite_index"))] = idx.get("url", "")
+                                        citation_map[str(idx.get("cite_index"))] = (
+                                            idx.get("url", "")
+                                        )
                                     continue
                                 for choice in chunk.get("choices", []):
                                     delta = choice.get("delta", {})
                                     ctype = delta.get("type")
                                     ctext = delta.get("content", "")
-                                    if search_enabled and ctext.startswith("[citation:"):
+                                    if search_enabled and ctext.startswith(
+                                        "[citation:"
+                                    ):
                                         ctext = ""
                                     if ctype == "thinking" and thinking_enabled:
                                         think_list.append(ctext)
                                     elif ctype == "text":
                                         text_list.append(ctext)
                             except Exception as e:
-                                logger.warning(f"[collect_data] 无法解析: {data_str}, 错误: {e}")
-                                raise HTTPException(status_code=500, detail="Server is error.")
+                                logger.warning(
+                                    f"[collect_data] 无法解析: {data_str}, 错误: {e}"
+                                )
+                                raise HTTPException(
+                                    status_code=500, detail="Server is error."
+                                )
                 except Exception as e:
                     logger.warning(f"[collect_data] 错误: {e}")
                     raise HTTPException(status_code=500, detail="Server is error.")
@@ -804,32 +936,35 @@ async def chat_completions(request: Request):
                                 "message": {
                                     "role": "assistant",
                                     "content": final_content,
-                                    "reasoning_content": final_reasoning
+                                    "reasoning_content": final_reasoning,
                                 },
-                                "finish_reason": "stop"
+                                "finish_reason": "stop",
                             }
                         ],
                         "usage": {
                             "prompt_tokens": prompt_tokens,
                             "completion_tokens": completion_tokens,
-                            "total_tokens": prompt_tokens + completion_tokens
-                        }
+                            "total_tokens": prompt_tokens + completion_tokens,
+                        },
                     }
                     data_queue.put("DONE")
+
             collect_thread = threading.Thread(target=collect_data)
             collect_thread.start()
+
             def generate():
                 last_send_time = time.time()
                 while True:
                     current_time = time.time()
                     if current_time - last_send_time >= KEEP_ALIVE_TIMEOUT:
 
-                        yield ''
+                        yield ""
                         last_send_time = current_time
                     if not collect_thread.is_alive() and result is not None:
                         yield json.dumps(result)
                         break
                     time.sleep(0.1)
+
             return StreamingResponse(generate(), media_type="application/json")
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
@@ -837,8 +972,11 @@ async def chat_completions(request: Request):
         logger.error(f"[chat_completions] 未知异常: {exc}")
         return JSONResponse(status_code=500, content={"error": "Internal Server Error"})
     finally:
-        if getattr(request.state, "use_config_token", False) and hasattr(request.state, "account"):
+        if getattr(request.state, "use_config_token", False) and hasattr(
+            request.state, "account"
+        ):
             release_account(request.state.account)
+
 
 # ----------------------------------------------------------------------
 # (11) 路由：/
@@ -847,9 +985,11 @@ async def chat_completions(request: Request):
 def index(request: Request):
     return templates.TemplateResponse("welcome.html", {"request": request})
 
+
 # ----------------------------------------------------------------------
 # 启动 FastAPI 应用
 # ----------------------------------------------------------------------
-if __name__ == '__main__':
+if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host='0.0.0.0', port=5001)
+
+    uvicorn.run(app, host="0.0.0.0", port=5001)
