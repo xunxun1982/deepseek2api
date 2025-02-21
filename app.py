@@ -2,7 +2,6 @@ import base64
 import ctypes
 import json
 import logging
-import os
 import queue
 import random
 import re
@@ -14,7 +13,7 @@ import transformers
 from curl_cffi import requests
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from wasmtime import Linker, Module, Store
 
@@ -177,7 +176,6 @@ def login_deepseek_via_account(account):
         )
     account["token"] = new_token
     save_config(CONFIG)
-    identifier = email if email else mobile
     return new_token
 
 
