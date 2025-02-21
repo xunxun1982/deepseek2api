@@ -1,3 +1,10 @@
+# [1.3.0-beta.3](https://github.com/iidamie/deepseek2api/compare/v1.3.0-beta.2...v1.3.0-beta.3) (2025-02-21)
+
+
+### Bug Fixes
+
+* 清理无用代码 ([afefb3e](https://github.com/iidamie/deepseek2api/commit/afefb3e685564550a3871454da821ded28626bae))
+
 # [1.3.0-beta.2](https://github.com/iidamie/deepseek2api/compare/v1.3.0-beta.1...v1.3.0-beta.2) (2025-02-21)
 
 
