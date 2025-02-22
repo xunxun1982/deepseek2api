@@ -1,3 +1,10 @@
+# [1.3.0-beta.4](https://github.com/iidamie/deepseek2api/compare/v1.3.0-beta.3...v1.3.0-beta.4) (2025-02-22)
+
+
+### Bug Fixes
+
+* 优化对 finish_reason 的处理 ([ad17c0d](https://github.com/iidamie/deepseek2api/commit/ad17c0df6ffffcd741f281894bc1bd1ebf99ba3d))
+
 ## [1.2.8](https://github.com/iidamie/deepseek2api/compare/v1.2.7...v1.2.8) (2025-02-20)
 
 
