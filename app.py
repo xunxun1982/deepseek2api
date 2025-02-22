@@ -737,15 +737,16 @@ async def chat_completions(request: Request):
                                                     str(idx.get("cite_index"))
                                                 ] = idx.get("url", "")
                                             continue
-                                        if (
-                                            chunk.get("choices", [{}])[0]
-                                            .get("finish_reason")
-                                            == "backend_busy"
-                                        ):
-                                            busy_content_str = '{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":0,"message_id":-1,"parent_id":-1}'
-                                            busy_content = json.loads(busy_content_str)
-                                            result_queue.put(busy_content)
-                                            result_queue.put(None)
+                                        # if (
+                                            # chunk.get("choices", [{}])[0]
+                                            # .get("finish_reason")
+                                            # == "backend_busy"
+                                        # ):
+                                            # busy_content_str = '{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":0,"message_id":-1,"parent_id":-1}'
+                                            # busy_content = json.loads(busy_content_str)
+                                            # result_queue.put(busy_content)
+                                            # result_queue.put(None)
+                                            # break
                                         result_queue.put(chunk)  # 将数据放入队列
                                     except Exception as e:
                                         logger.warning(
@@ -806,6 +807,12 @@ async def chat_completions(request: Request):
                                 delta = choice.get("delta", {})
                                 ctype = delta.get("type")
                                 ctext = delta.get("content", "")
+                                if (
+                                    choice
+                                    .get("finish_reason")
+                                    == "backend_busy"
+                                ):
+                                    ctext = '服务器繁忙，请稍候再试'
                                 if search_enabled and ctext.startswith("[citation:"):
                                     ctext = ""
                                 if ctype == "thinking":
@@ -901,6 +908,14 @@ async def chat_completions(request: Request):
                                     delta = choice.get("delta", {})
                                     ctype = delta.get("type")
                                     ctext = delta.get("content", "")
+                                    if (
+                                        choice
+                                        .get("finish_reason")
+                                        == "backend_busy"
+                                    ):
+                                        ctext = '服务器繁忙，请稍候再试'
+                                        # data_queue.put(None)
+                                        # break
                                     if search_enabled and ctext.startswith(
                                         "[citation:"
                                     ):
