@@ -1,3 +1,10 @@
+## [1.3.1-beta.2](https://github.com/iidamie/deepseek2api/compare/v1.3.1-beta.1...v1.3.1-beta.2) (2025-02-23)
+
+
+### Bug Fixes
+
+* 优化异常处理机制 ([2b7418c](https://github.com/iidamie/deepseek2api/commit/2b7418c3094c7ec7ecadb4c90989881f6adb5020))
+
 ## [1.3.1-beta.1](https://github.com/iidamie/deepseek2api/compare/v1.3.0...v1.3.1-beta.1) (2025-02-22)
 
 
