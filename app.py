@@ -710,9 +710,11 @@ async def chat_completions(request: Request):
                                     line = raw_line.decode("utf-8")
                                 except Exception as e:
                                     logger.warning(f"[sse_stream] 解码失败: {e}")
-                                    raise HTTPException(
-                                        status_code=500, detail="Server is error."
-                                    )
+                                    busy_content_str = '{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":0,"message_id":-1,"parent_id":-1}'
+                                    busy_content = json.loads(busy_content_str)
+                                    result_queue.put(busy_content)
+                                    result_queue.put(None)
+                                    break
                                 if not line:
                                     continue
                                 if line.startswith("data:"):
@@ -752,14 +754,20 @@ async def chat_completions(request: Request):
                                         logger.warning(
                                             f"[sse_stream] 无法解析: {data_str}, 错误: {e}"
                                         )
-                                        raise HTTPException(
-                                            status_code=500, detail="Server is error."
-                                        )
+                                        busy_content_str = '{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":0,"message_id":-1,"parent_id":-1}'
+                                        busy_content = json.loads(busy_content_str)
+                                        result_queue.put(busy_content)
+                                        result_queue.put(None)
+                                        break
                         except Exception as e:
                             logger.warning(f"[sse_stream] 错误: {e}")
-                            raise HTTPException(
-                                status_code=500, detail="Server is error."
-                            )
+                            busy_content_str = '{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":0,"message_id":-1,"parent_id":-1}'
+                            busy_content = json.loads(busy_content_str)
+                            result_queue.put(busy_content)
+                            result_queue.put(None)
+                            # raise HTTPException(
+                                # status_code=500, detail="Server is error."
+                            # )
                         finally:
                             deepseek_resp.close()
 
@@ -878,9 +886,10 @@ async def chat_completions(request: Request):
                             line = raw_line.decode("utf-8")
                         except Exception as e:
                             logger.warning(f"[chat_completions] 解码失败: {e}")
-                            raise HTTPException(
-                                status_code=500, detail="Server is error."
-                            )
+                            ctext = '服务器繁忙，请稍候再试'
+                            text_list.append(ctext)
+                            data_queue.put(None)
+                            break
                         if not line:
                             continue
                         if line.startswith("data:"):
@@ -928,12 +937,15 @@ async def chat_completions(request: Request):
                                 logger.warning(
                                     f"[collect_data] 无法解析: {data_str}, 错误: {e}"
                                 )
-                                raise HTTPException(
-                                    status_code=500, detail="Server is error."
-                                )
+                                ctext = '服务器繁忙，请稍候再试'
+                                text_list.append(ctext)
+                                data_queue.put(None)
+                                break
                 except Exception as e:
                     logger.warning(f"[collect_data] 错误: {e}")
-                    raise HTTPException(status_code=500, detail="Server is error.")
+                    ctext = '服务器繁忙，请稍候再试'
+                    text_list.append(ctext)
+                    data_queue.put(None)
                 finally:
                     deepseek_resp.close()
                     final_reasoning = "".join(think_list)
