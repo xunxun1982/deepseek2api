@@ -11,6 +11,8 @@ on:
       - '.github/**'
       - 'vercel.json'
       - '.gitignore'
+      - 'CHANGELOG.md'
+      - 'version.txt'
 
 jobs:
   semantic-release:
