@@ -1,7 +1,6 @@
 config.json
 docker-compose.yml
 .gitignore
-README.MD
 .github
 vercel.json
 .releaserc.json
