@@ -606,7 +606,7 @@ def messages_prepare(messages: list) -> str:
         else:
             parts.append(text)
     final_prompt = "".join(parts)
-    # 移除 markdown 图片格式：
+    # 仅移除 markdown 图片格式(不全部移除 !）
     final_prompt = re.sub(r"!\[(.*?)\]\((.*?)\)", r"[\1](\2)", final_prompt)
     return final_prompt
 
