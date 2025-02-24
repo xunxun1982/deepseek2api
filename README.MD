@@ -3,7 +3,6 @@
 [![](https://img.shields.io/github/license/iidamie/deepseek2api.svg)](LICENSE)
 ![](https://img.shields.io/github/stars/iidamie/deepseek2api.svg)
 ![](https://img.shields.io/github/forks/iidamie/deepseek2api.svg)
-![](https://img.shields.io/docker/pulls/iidamie/deepseek2api.svg)
 
 支持高速流式输出、支持多轮对话、支持R1深度思考，多路账号支持。
 
@@ -92,7 +91,7 @@
 拉取镜像并启动服务。
 
 ```shell
-docker run -d -p 5001:5001 -v "$(pwd)/config.json:/app/config.json" --name deepseek2api iidamie/deepseek2api:latest
+docker run -d -p 5001:5001 -v "$(pwd)/config.json:/app/config.json" --name deepseek2api ghcr.io/iidamie/deepseek2api:latest
 ```
 
 查看服务实时日志
