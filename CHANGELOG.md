@@ -1,3 +1,10 @@
+## [1.3.3](https://github.com/iidamie/deepseek2api/compare/v1.3.2...v1.3.3) (2025-02-24)
+
+
+### Bug Fixes
+
+* 修复 "!" 错误移除的问题 ([2c2c08b](https://github.com/iidamie/deepseek2api/commit/2c2c08ba3b98ff6361d14d450edc483536b48c10))
+
 ## [1.3.2](https://github.com/iidamie/deepseek2api/compare/v1.3.1...v1.3.2) (2025-02-23)
 
 
