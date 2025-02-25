@@ -114,7 +114,7 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ghcr.io/iidamie/deepseek2api:${{ steps.get_version.outputs.version }}
-            ghcr.io/iidamie/deepseek2api:latest
+            ghcr.io/${{ github.actor }}/deepseek2api:${{ steps.get_version.outputs.version }}
+            ghcr.io/${{ github.actor }}/deepseek2api:latest
           platforms: linux/amd64,linux/arm64
           build-args: TARGETPLATFORM=${{ matrix.platform }}
