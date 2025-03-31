@@ -858,11 +858,11 @@ async def chat_completions(request: Request):
                             continue
                 except Exception as e:
                     logger.error(f"[sse_stream] 异常: {e}")
-                finally:
-                    if getattr(request.state, "use_config_token", False) and hasattr(
-                        request.state, "account"
-                    ):
-                        release_account(request.state.account)
+                # finally:
+                    # if getattr(request.state, "use_config_token", False) and hasattr(
+                        # request.state, "account"
+                    # ):
+                        # release_account(request.state.account)
 
             return StreamingResponse(
                 sse_stream(),
