@@ -146,7 +146,7 @@ def login_deepseek_via_account(account):
             "os": "android",
         }
     try:
-        resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
+        resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload, impersonate="safari15_3")
         resp.raise_for_status()
     except Exception as e:
         logger.error(f"[login_deepseek_via_account] 登录请求异常: {e}")
@@ -263,7 +263,7 @@ def call_completion_endpoint(payload, headers, max_attempts=3):
     while attempts < max_attempts:
         try:
             deepseek_resp = requests.post(
-                DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True
+                DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True, impersonate="safari15_3"
             )
         except Exception as e:
             logger.warning(f"[call_completion_endpoint] 请求异常: {e}")
@@ -291,7 +291,7 @@ def create_session(request: Request, max_attempts=3):
         headers = get_auth_headers(request)
         try:
             resp = requests.post(
-                DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"}
+                DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"}, impersonate="safari15_3"
             )
         except Exception as e:
             logger.error(f"[create_session] 请求异常: {e}")
@@ -447,6 +447,7 @@ def get_pow_response(request: Request, max_attempts=3):
                 headers=headers,
                 json={"target_path": "/api/v0/chat/completion"},
                 timeout=30,
+                impersonate="safari15_3",
             )
         except Exception as e:
             logger.error(f"[get_pow_response] 请求异常: {e}")
