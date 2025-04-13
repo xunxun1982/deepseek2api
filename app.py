@@ -146,12 +146,13 @@ def login_deepseek_via_account(account):
             "os": "android",
         }
     try:
-        resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload)
+        resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload, impersonate="safari15_3")
         resp.raise_for_status()
     except Exception as e:
         logger.error(f"[login_deepseek_via_account] 登录请求异常: {e}")
         raise HTTPException(status_code=500, detail="Account login failed: 请求异常")
     try:
+        logger.warning(f"[login_deepseek_via_account] {resp.text}")
         data = resp.json()
     except Exception as e:
         logger.error(f"[login_deepseek_via_account] JSON解析失败: {e}")
@@ -193,7 +194,7 @@ def choose_new_account():
         acc_id = get_account_identifier(acc)
         if acc_id:
             # 从队列中移除并返回
-            # logger.info(f"[choose_new_account] 新选择账号: {acc_id}")
+            logger.info(f"[choose_new_account] 新选择账号: {acc_id}")
             return account_queue.pop(i)
 
     logger.warning("[choose_new_account] 没有可用的账号或所有账号都在使用中")
@@ -262,7 +263,7 @@ def call_completion_endpoint(payload, headers, max_attempts=3):
     while attempts < max_attempts:
         try:
             deepseek_resp = requests.post(
-                DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True
+                DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True, impersonate="safari15_3"
             )
         except Exception as e:
             logger.warning(f"[call_completion_endpoint] 请求异常: {e}")
@@ -290,14 +291,16 @@ def create_session(request: Request, max_attempts=3):
         headers = get_auth_headers(request)
         try:
             resp = requests.post(
-                DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"}
+                DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"}, impersonate="safari15_3"
             )
         except Exception as e:
             logger.error(f"[create_session] 请求异常: {e}")
             attempts += 1
             continue
         try:
+            logger.warning(f"[create_session] {resp.text}")
             data = resp.json()
+            
         except Exception as e:
             logger.error(f"[create_session] JSON解析异常: {e}")
             data = {}
@@ -444,6 +447,7 @@ def get_pow_response(request: Request, max_attempts=3):
                 headers=headers,
                 json={"target_path": "/api/v0/chat/completion"},
                 timeout=30,
+                impersonate="safari15_3",
             )
         except Exception as e:
             logger.error(f"[get_pow_response] 请求异常: {e}")
