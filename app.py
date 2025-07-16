@@ -98,7 +98,7 @@ BASE_HEADERS = {
     "Accept-Encoding": "gzip",
     "Content-Type": "application/json",
     "x-client-platform": "android",
-    "x-client-version": "1.0.13",
+    "x-client-version": "1.3.0-auto-resume",
     "x-client-locale": "zh_CN",
     "accept-charset": "UTF-8",
 }
@@ -728,32 +728,43 @@ async def chat_completions(request: Request):
                                         break
                                     try:
                                         chunk = json.loads(data_str)
-                                        # 处理搜索索引数据
-                                        if (
-                                            chunk.get("choices", [{}])[0]
-                                            .get("delta", {})
-                                            .get("type")
-                                            == "search_index"
-                                        ):
-                                            search_indexes = chunk["choices"][0][
-                                                "delta"
-                                            ].get("search_indexes", [])
-                                            for idx in search_indexes:
-                                                citation_map[
-                                                    str(idx.get("cite_index"))
-                                                ] = idx.get("url", "")
-                                            continue
-                                        # if (
-                                            # chunk.get("choices", [{}])[0]
-                                            # .get("finish_reason")
-                                            # == "backend_busy"
-                                        # ):
-                                            # busy_content_str = '{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":0,"message_id":-1,"parent_id":-1}'
-                                            # busy_content = json.loads(busy_content_str)
-                                            # result_queue.put(busy_content)
-                                            # result_queue.put(None)
-                                            # break
-                                        result_queue.put(chunk)  # 将数据放入队列
+                                        
+                                        if "v" in chunk:
+                                            v_value = chunk["v"]
+                    
+                                            # 构造新的 delta 格式的 chunk
+                                            content = ""
+                    
+                                            # 处理文本内容
+                                            if isinstance(v_value, str):
+                                                content = v_value
+                                            # 处理数组更新如状态变更
+                                            elif isinstance(v_value, list):
+                                                for item in v_value:
+                                                    if item.get("p") == "status" and item.get("v") == "FINISHED":
+                                                        # 最终完成信号
+                                                        result_queue.put({"choices": [{"index": 0, "finish_reason": "stop"}]})
+                                                        result_queue.put(None)
+                                                        return
+                                                continue
+                                            
+                                            # 构造兼容原逻辑的 chunk
+                                            unified_chunk = {
+                                                "choices": [{
+                                                    "index": 0,
+                                                    "delta": {
+                                                        "content": content,
+                                                        "type": "text"
+                                                    }
+                                                }],
+                                                "model": "",
+                                                "chunk_token_usage": len(content.split()),
+                                                "created": 0,
+                                                "message_id": -1,
+                                                "parent_id": -1
+                                            }
+                    
+                                            result_queue.put(unified_chunk)
                                     except Exception as e:
                                         logger.warning(
                                             f"[sse_stream] 无法解析: {data_str}, 错误: {e}"
