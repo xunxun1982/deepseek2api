@@ -758,7 +758,7 @@ async def chat_completions(request: Request):
                                                     }
                                                 }],
                                                 "model": "",
-                                                "chunk_token_usage": len(content.split()),
+                                                "chunk_token_usage": len(chat_tokenizer.encode(content)),
                                                 "created": 0,
                                                 "message_id": -1,
                                                 "parent_id": -1
