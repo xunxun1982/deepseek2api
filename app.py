@@ -98,7 +98,7 @@ BASE_HEADERS = {
     "Accept-Encoding": "gzip",
     "Content-Type": "application/json",
     "x-client-platform": "android",
-    "x-client-version": "1.0.13",
+    "x-client-version": "1.3.0-auto-resume",
     "x-client-locale": "zh_CN",
     "accept-charset": "UTF-8",
 }
@@ -728,32 +728,43 @@ async def chat_completions(request: Request):
                                         break
                                     try:
                                         chunk = json.loads(data_str)
-                                        # 处理搜索索引数据
-                                        if (
-                                            chunk.get("choices", [{}])[0]
-                                            .get("delta", {})
-                                            .get("type")
-                                            == "search_index"
-                                        ):
-                                            search_indexes = chunk["choices"][0][
-                                                "delta"
-                                            ].get("search_indexes", [])
-                                            for idx in search_indexes:
-                                                citation_map[
-                                                    str(idx.get("cite_index"))
-                                                ] = idx.get("url", "")
-                                            continue
-                                        # if (
-                                            # chunk.get("choices", [{}])[0]
-                                            # .get("finish_reason")
-                                            # == "backend_busy"
-                                        # ):
-                                            # busy_content_str = '{"choices":[{"index":0,"delta":{"content":"服务器繁忙，请稍候再试","type":"text"}}],"model":"","chunk_token_usage":1,"created":0,"message_id":-1,"parent_id":-1}'
-                                            # busy_content = json.loads(busy_content_str)
-                                            # result_queue.put(busy_content)
-                                            # result_queue.put(None)
-                                            # break
-                                        result_queue.put(chunk)  # 将数据放入队列
+                                        
+                                        if "v" in chunk:
+                                            v_value = chunk["v"]
+                    
+                                            # 构造新的 delta 格式的 chunk
+                                            content = ""
+                    
+                                            # 处理文本内容
+                                            if isinstance(v_value, str):
+                                                content = v_value
+                                            # 处理数组更新如状态变更
+                                            elif isinstance(v_value, list):
+                                                for item in v_value:
+                                                    if item.get("p") == "status" and item.get("v") == "FINISHED":
+                                                        # 最终完成信号
+                                                        result_queue.put({"choices": [{"index": 0, "finish_reason": "stop"}]})
+                                                        result_queue.put(None)
+                                                        return
+                                                continue
+                                            
+                                            # 构造兼容原逻辑的 chunk
+                                            unified_chunk = {
+                                                "choices": [{
+                                                    "index": 0,
+                                                    "delta": {
+                                                        "content": content,
+                                                        "type": "text"
+                                                    }
+                                                }],
+                                                "model": "",
+                                                "chunk_token_usage": len(chat_tokenizer.encode(content)),
+                                                "created": 0,
+                                                "message_id": -1,
+                                                "parent_id": -1
+                                            }
+                    
+                                            result_queue.put(unified_chunk)
                                     except Exception as e:
                                         logger.warning(
                                             f"[sse_stream] 无法解析: {data_str}, 错误: {e}"
@@ -903,44 +914,53 @@ async def chat_completions(request: Request):
                                 break
                             try:
                                 chunk = json.loads(data_str)
-                                if (
-                                    chunk.get("choices", [{}])[0]
-                                    .get("delta", {})
-                                    .get("type")
-                                    == "search_index"
-                                ):
-                                    search_indexes = chunk["choices"][0]["delta"].get(
-                                        "search_indexes", []
-                                    )
-                                    for idx in search_indexes:
-                                        citation_map[str(idx.get("cite_index"))] = (
-                                            idx.get("url", "")
-                                        )
-                                    continue
-                                for choice in chunk.get("choices", []):
-                                    delta = choice.get("delta", {})
-                                    ctype = delta.get("type")
-                                    ctext = delta.get("content", "")
-                                    if (
-                                        choice
-                                        .get("finish_reason")
-                                        == "backend_busy"
-                                    ):
-                                        ctext = '服务器繁忙，请稍候再试'
-                                        # data_queue.put(None)
-                                        # break
-                                    if search_enabled and ctext.startswith(
-                                        "[citation:"
-                                    ):
-                                        ctext = ""
-                                    if ctype == "thinking" and thinking_enabled:
-                                        think_list.append(ctext)
-                                    elif ctype == "text":
-                                        text_list.append(ctext)
+            
+                                # 提取 v 字段
+                                if "v" in chunk:
+                                    v_value = chunk["v"]
+            
+                                    # 处理字符串形式的 v 值（即文本内容）
+                                    if isinstance(v_value, str):
+                                        if search_enabled and v_value.startswith("[citation:"):
+                                            continue  # 跳过 citation 内容
+                                        text_list.append(v_value)
+            
+                                    # 处理数组更新如状态变更
+                                    elif isinstance(v_value, list):
+                                        for item in v_value:
+                                            if item.get("p") == "status" and item.get("v") == "FINISHED":
+                                                # 构建最终结果
+                                                final_reasoning = "".join(think_list)
+                                                final_content = "".join(text_list)
+                                                prompt_tokens = len(tokenizer.encode(final_prompt))
+                                                completion_tokens = len(tokenizer.encode(final_content))
+                                                result = {
+                                                    "id": completion_id,
+                                                    "object": "chat.completion",
+                                                    "created": created_time,
+                                                    "model": model,
+                                                    "choices": [
+                                                        {
+                                                            "index": 0,
+                                                            "message": {
+                                                                "role": "assistant",
+                                                                "content": final_content,
+                                                                "reasoning_content": final_reasoning,
+                                                            },
+                                                            "finish_reason": "stop",
+                                                        }
+                                                    ],
+                                                    "usage": {
+                                                        "prompt_tokens": prompt_tokens,
+                                                        "completion_tokens": completion_tokens,
+                                                        "total_tokens": prompt_tokens + completion_tokens,
+                                                    },
+                                                }
+                                                data_queue.put("DONE")
+                                                return  # 提前返回，结束函数
+            
                             except Exception as e:
-                                logger.warning(
-                                    f"[collect_data] 无法解析: {data_str}, 错误: {e}"
-                                )
+                                logger.warning(f"[collect_data] 无法解析: {data_str}, 错误: {e}")
                                 ctext = '服务器繁忙，请稍候再试'
                                 text_list.append(ctext)
                                 data_queue.put(None)
@@ -952,32 +972,33 @@ async def chat_completions(request: Request):
                     data_queue.put(None)
                 finally:
                     deepseek_resp.close()
-                    final_reasoning = "".join(think_list)
-                    final_content = "".join(text_list)
-                    prompt_tokens = len(tokenizer.encode(final_prompt))
-                    completion_tokens = len(tokenizer.encode(final_content))
-                    result = {
-                        "id": completion_id,
-                        "object": "chat.completion",
-                        "created": created_time,
-                        "model": model,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "message": {
-                                    "role": "assistant",
-                                    "content": final_content,
-                                    "reasoning_content": final_reasoning,
-                                },
-                                "finish_reason": "stop",
-                            }
-                        ],
-                        "usage": {
-                            "prompt_tokens": prompt_tokens,
-                            "completion_tokens": completion_tokens,
-                            "total_tokens": prompt_tokens + completion_tokens,
-                        },
-                    }
+                    if result is None:
+                        # 如果没有提前构造 result，则构造默认结果
+                        final_content = "".join(text_list)
+                        prompt_tokens = len(tokenizer.encode(final_prompt))
+                        completion_tokens = len(tokenizer.encode(final_content))
+                        result = {
+                            "id": completion_id,
+                            "object": "chat.completion",
+                            "created": created_time,
+                            "model": model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": final_content,
+                                        "reasoning_content": "".join(think_list),
+                                    },
+                                    "finish_reason": "stop",
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                                "total_tokens": prompt_tokens + completion_tokens,
+                            },
+                        }
                     data_queue.put("DONE")
 
             collect_thread = threading.Thread(target=collect_data)
