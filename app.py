@@ -730,10 +730,13 @@ async def chat_completions(request: Request):
                                         
                                         if "v" in chunk:
                                             v_value = chunk["v"]
-                    
+                                            
                                             # 构造新的 delta 格式的 chunk
                                             content = ""
-                    
+
+                                            if "p" in chunk and chunk.get("p") == "response/search_status":
+                                                continue
+
                                             # 处理文本内容
                                             if isinstance(v_value, str):
                                                 content = v_value
