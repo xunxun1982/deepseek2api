@@ -707,6 +707,7 @@ async def chat_completions(request: Request):
                     citation_map = {}  # 用于存储引用链接的字典
 
                     def process_data():
+                        ptype = "text"
                         try:
                             for raw_line in deepseek_resp.iter_lines():
                                 try:
@@ -736,6 +737,11 @@ async def chat_completions(request: Request):
 
                                             if "p" in chunk and chunk.get("p") == "response/search_status":
                                                 continue
+                                                
+                                            if "p" in chunk and chunk.get("p") == "response/thinking_content":
+                                                ptype = "thinking"
+                                            elif "p" in chunk and chunk.get("p") == "response/content":
+                                                ptype = "text"
 
                                             # 处理文本内容
                                             if isinstance(v_value, str):
@@ -756,7 +762,7 @@ async def chat_completions(request: Request):
                                                     "index": 0,
                                                     "delta": {
                                                         "content": content,
-                                                        "type": "text"
+                                                        "type": ptype
                                                     }
                                                 }],
                                                 "model": "",
@@ -799,15 +805,19 @@ async def chat_completions(request: Request):
                             last_send_time = current_time
                             continue
                         try:
-                            chunk = result_queue.get(timeout=0.1)
+                            chunk = result_queue.get(timeout=0.05)
                             if chunk is None:
                                 # 发送最终统计信息
                                 prompt_tokens = len(tokenizer.encode(final_prompt))
+                                thinking_tokens = len(tokenizer.encode(final_thinking))
                                 completion_tokens = len(tokenizer.encode(final_text))
                                 usage = {
                                     "prompt_tokens": prompt_tokens,
-                                    "completion_tokens": completion_tokens,
-                                    "total_tokens": prompt_tokens + completion_tokens,
+                                    "completion_tokens": thinking_tokens + completion_tokens,
+                                    "total_tokens": prompt_tokens + thinking_tokens + completion_tokens,
+                                    "completion_tokens_details": {
+                                        "reasoning_tokens": thinking_tokens
+                                    },
                                 }
                                 finish_chunk = {
                                     "id": completion_id,
@@ -897,6 +907,7 @@ async def chat_completions(request: Request):
 
             def collect_data():
                 nonlocal result
+                ptype = "text"
                 try:
                     for raw_line in deepseek_resp.iter_lines():
                         try:
@@ -920,12 +931,23 @@ async def chat_completions(request: Request):
                                 # 提取 v 字段
                                 if "v" in chunk:
                                     v_value = chunk["v"]
+                                    
+                                    if "p" in chunk and chunk.get("p") == "response/search_status":
+                                        continue
+                                                
+                                    if "p" in chunk and chunk.get("p") == "response/thinking_content":
+                                        ptype = "thinking"
+                                    elif "p" in chunk and chunk.get("p") == "response/content":
+                                        ptype = "text"
             
                                     # 处理字符串形式的 v 值（即文本内容）
                                     if isinstance(v_value, str):
                                         if search_enabled and v_value.startswith("[citation:"):
                                             continue  # 跳过 citation 内容
-                                        text_list.append(v_value)
+                                        if ptype == "thinking":
+                                            think_list.append(v_value)
+                                        else:
+                                            text_list.append(v_value)
             
                                     # 处理数组更新如状态变更
                                     elif isinstance(v_value, list):
@@ -935,6 +957,7 @@ async def chat_completions(request: Request):
                                                 final_reasoning = "".join(think_list)
                                                 final_content = "".join(text_list)
                                                 prompt_tokens = len(tokenizer.encode(final_prompt))
+                                                reasoning_tokens = len(tokenizer.encode(final_reasoning))
                                                 completion_tokens = len(tokenizer.encode(final_content))
                                                 result = {
                                                     "id": completion_id,
@@ -954,8 +977,11 @@ async def chat_completions(request: Request):
                                                     ],
                                                     "usage": {
                                                         "prompt_tokens": prompt_tokens,
-                                                        "completion_tokens": completion_tokens,
-                                                        "total_tokens": prompt_tokens + completion_tokens,
+                                                        "completion_tokens": reasoning_tokens + completion_tokens,
+                                                        "total_tokens": prompt_tokens + reasoning_tokens + completion_tokens,
+                                                        "completion_tokens_details": {
+                                                            "reasoning_tokens": reasoning_tokens
+                                                        },
                                                     },
                                                 }
                                                 data_queue.put("DONE")
@@ -977,7 +1003,9 @@ async def chat_completions(request: Request):
                     if result is None:
                         # 如果没有提前构造 result，则构造默认结果
                         final_content = "".join(text_list)
+                        final_reasoning = "".join(text_list)
                         prompt_tokens = len(tokenizer.encode(final_prompt))
+                        reasoning_tokens = len(tokenizer.encode(final_reasoning))
                         completion_tokens = len(tokenizer.encode(final_content))
                         result = {
                             "id": completion_id,
@@ -990,15 +1018,15 @@ async def chat_completions(request: Request):
                                     "message": {
                                         "role": "assistant",
                                         "content": final_content,
-                                        "reasoning_content": "".join(think_list),
+                                        "reasoning_content": final_reasoning,
                                     },
                                     "finish_reason": "stop",
                                 }
                             ],
                             "usage": {
                                 "prompt_tokens": prompt_tokens,
-                                "completion_tokens": completion_tokens,
-                                "total_tokens": prompt_tokens + completion_tokens,
+                                "completion_tokens": reasoning_tokens + completion_tokens,
+                                "total_tokens": prompt_tokens + reasoning_tokens + completion_tokens,
                             },
                         }
                     data_queue.put("DONE")
