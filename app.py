@@ -609,7 +609,10 @@ def compute_pow_answer(
         ptr_prefix, len_prefix = encode_string(prefix)
         logger.debug(f"字符串编码成功: challenge_ptr={ptr_challenge}, prefix_ptr={ptr_prefix}")
     except Exception as e:
-        add_to_stack(store, 16)  # 恢复栈指针
+        try:
+            add_to_stack(store, 16)  # 恢复栈指针
+        except Exception as cleanup_error:
+            logger.error(f"恢复栈指针时发生额外错误: {cleanup_error}")
         logger.error(f"编码字符串失败: {e}")
         raise RuntimeError(f"WASM 字符串编码失败: {e}")
     
@@ -627,7 +630,10 @@ def compute_pow_answer(
         )
         logger.debug("wasm_solve 调用成功")
     except Exception as e:
-        add_to_stack(store, 16)  # 恢复栈指针
+        try:
+            add_to_stack(store, 16)  # 恢复栈指针
+        except Exception as cleanup_error:
+            logger.error(f"恢复栈指针时发生额外错误: {cleanup_error}")
         logger.error(f"调用 wasm_solve 失败: {e}")
         raise RuntimeError(f"WASM 求解函数调用失败: {e}")
     
@@ -635,18 +641,27 @@ def compute_pow_answer(
     try:
         status_bytes = read_memory(retptr, 4)
         if len(status_bytes) != 4:
-            add_to_stack(store, 16)
+            try:
+                add_to_stack(store, 16)
+            except Exception as cleanup_error:
+                logger.error(f"恢复栈指针时发生额外错误: {cleanup_error}")
             raise RuntimeError("读取状态字节失败")
         status = struct.unpack("<i", status_bytes)[0]
         
         value_bytes = read_memory(retptr + 8, 8)
         if len(value_bytes) != 8:
-            add_to_stack(store, 16)
+            try:
+                add_to_stack(store, 16)
+            except Exception as cleanup_error:
+                logger.error(f"恢复栈指针时发生额外错误: {cleanup_error}")
             raise RuntimeError("读取结果字节失败")
         value = struct.unpack("<d", value_bytes)[0]
         logger.debug(f"读取结果成功: status={status}, value={value}")
     except Exception as e:
-        add_to_stack(store, 16)  # 恢复栈指针
+        try:
+            add_to_stack(store, 16)  # 恢复栈指针
+        except Exception as cleanup_error:
+            logger.error(f"恢复栈指针时发生额外错误: {cleanup_error}")
         logger.error(f"读取 WASM 内存结果失败: {e}")
         raise RuntimeError(f"读取 WASM 计算结果失败: {e}")
     
@@ -655,8 +670,9 @@ def compute_pow_answer(
         add_to_stack(store, 16)
         logger.debug("栈指针恢复成功")
     except Exception as e:
-        logger.error(f"恢复栈指针失败: {e}")
-        # 不抛出异常，因为主要操作已完成
+        logger.error(f"恢复栈指针失败（警告：栈可能处于不一致状态）: {e}")
+        logger.error("后续 WASM 操作可能会受到影响")
+        # 不抛出异常，因为主要操作已完成，但记录严重警告
     
     if status == 0:
         return None
