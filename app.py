@@ -530,70 +530,134 @@ def compute_pow_answer(
         raise ValueError(f"不支持的算法：{algorithm}")
     prefix = f"{salt}_{expire_at}_"
     # --- 加载 wasm 模块 ---
-    store = Store()
-    linker = Linker(store.engine)
+    try:
+        store = Store()
+        linker = Linker(store.engine)
+        logger.debug(f"初始化 WASM store 和 linker 成功")
+    except Exception as e:
+        logger.error(f"初始化 WASM 运行时失败: {e}")
+        raise RuntimeError(f"WASM 运行时初始化失败: {e}")
+    
     try:
         with open(wasm_path, "rb") as f:
             wasm_bytes = f.read()
+        logger.debug(f"成功读取 WASM 文件: {wasm_path}, 大小: {len(wasm_bytes)} 字节")
     except Exception as e:
         raise RuntimeError(f"加载 wasm 文件失败: {wasm_path}, 错误: {e}")
-    module = Module(store.engine, wasm_bytes)
-    instance = linker.instantiate(store, module)
-    exports = instance.exports(store)
+    
+    try:
+        module = Module(store.engine, wasm_bytes)
+        instance = linker.instantiate(store, module)
+        exports = instance.exports(store)
+        logger.debug("WASM 模块实例化成功")
+    except Exception as e:
+        logger.error(f"WASM 模块实例化失败: {e}")
+        raise RuntimeError(f"WASM 模块实例化失败（可能是系统不兼容）: {e}")
+    
     try:
         memory = exports["memory"]
         add_to_stack = exports["__wbindgen_add_to_stack_pointer"]
         alloc = exports["__wbindgen_export_0"]
         wasm_solve = exports["wasm_solve"]
+        logger.debug("WASM 导出函数绑定成功")
     except KeyError as e:
         raise RuntimeError(f"缺少 wasm 导出函数: {e}")
 
     def write_memory(offset: int, data: bytes):
-        size = len(data)
-        base_addr = ctypes.cast(memory.data_ptr(store), ctypes.c_void_p).value
-        ctypes.memmove(base_addr + offset, data, size)
+        try:
+            size = len(data)
+            base_addr = ctypes.cast(memory.data_ptr(store), ctypes.c_void_p).value
+            ctypes.memmove(base_addr + offset, data, size)
+        except Exception as e:
+            logger.error(f"写入 WASM 内存失败: offset={offset}, size={len(data)}, error={e}")
+            raise RuntimeError(f"WASM 内存写入失败: {e}")
 
     def read_memory(offset: int, size: int) -> bytes:
-        base_addr = ctypes.cast(memory.data_ptr(store), ctypes.c_void_p).value
-        return ctypes.string_at(base_addr + offset, size)
+        try:
+            base_addr = ctypes.cast(memory.data_ptr(store), ctypes.c_void_p).value
+            return ctypes.string_at(base_addr + offset, size)
+        except Exception as e:
+            logger.error(f"读取 WASM 内存失败: offset={offset}, size={size}, error={e}")
+            raise RuntimeError(f"WASM 内存读取失败: {e}")
 
     def encode_string(text: str):
-        data = text.encode("utf-8")
-        length = len(data)
-        ptr_val = alloc(store, length, 1)
-        ptr = int(ptr_val.value) if hasattr(ptr_val, "value") else int(ptr_val)
-        write_memory(ptr, data)
-        return ptr, length
+        try:
+            data = text.encode("utf-8")
+            length = len(data)
+            ptr_val = alloc(store, length, 1)
+            ptr = int(ptr_val.value) if hasattr(ptr_val, "value") else int(ptr_val)
+            write_memory(ptr, data)
+            return ptr, length
+        except Exception as e:
+            logger.error(f"编码字符串到 WASM 内存失败: text_len={len(text)}, error={e}")
+            raise RuntimeError(f"WASM 字符串编码失败: {e}")
 
     # 1. 申请 16 字节栈空间
-    retptr_val = add_to_stack(store, -16)
-    retptr = int(retptr_val.value) if hasattr(retptr_val, "value") else int(retptr_val)
+    try:
+        logger.debug("正在调用 add_to_stack(store, -16) 申请栈空间")
+        retptr_val = add_to_stack(store, -16)
+        retptr = int(retptr_val.value) if hasattr(retptr_val, "value") else int(retptr_val)
+        logger.debug(f"成功申请栈空间，retptr = {retptr}")
+    except Exception as e:
+        logger.error(f"申请 16 字节栈空间失败: {e}")
+        logger.error(f"这可能是 macOS 特定问题。请检查 wasmtime 库版本和系统兼容性。")
+        raise RuntimeError(f"WASM 栈空间分配失败（macOS 兼容性问题）: {e}")
+    
     # 2. 编码 challenge 与 prefix 到 wasm 内存中
-    ptr_challenge, len_challenge = encode_string(challenge_str)
-    ptr_prefix, len_prefix = encode_string(prefix)
+    try:
+        ptr_challenge, len_challenge = encode_string(challenge_str)
+        ptr_prefix, len_prefix = encode_string(prefix)
+        logger.debug(f"字符串编码成功: challenge_ptr={ptr_challenge}, prefix_ptr={ptr_prefix}")
+    except Exception as e:
+        add_to_stack(store, 16)  # 恢复栈指针
+        logger.error(f"编码字符串失败: {e}")
+        raise RuntimeError(f"WASM 字符串编码失败: {e}")
+    
     # 3. 调用 wasm_solve（注意：difficulty 以 float 形式传入）
-    wasm_solve(
-        store,
-        retptr,
-        ptr_challenge,
-        len_challenge,
-        ptr_prefix,
-        len_prefix,
-        float(difficulty),
-    )
+    try:
+        logger.debug(f"调用 wasm_solve: retptr={retptr}, difficulty={difficulty}")
+        wasm_solve(
+            store,
+            retptr,
+            ptr_challenge,
+            len_challenge,
+            ptr_prefix,
+            len_prefix,
+            float(difficulty),
+        )
+        logger.debug("wasm_solve 调用成功")
+    except Exception as e:
+        add_to_stack(store, 16)  # 恢复栈指针
+        logger.error(f"调用 wasm_solve 失败: {e}")
+        raise RuntimeError(f"WASM 求解函数调用失败: {e}")
+    
     # 4. 从 retptr 处读取 4 字节状态和 8 字节求解结果
-    status_bytes = read_memory(retptr, 4)
-    if len(status_bytes) != 4:
-        add_to_stack(store, 16)
-        raise RuntimeError("读取状态字节失败")
-    status = struct.unpack("<i", status_bytes)[0]
-    value_bytes = read_memory(retptr + 8, 8)
-    if len(value_bytes) != 8:
-        add_to_stack(store, 16)
-        raise RuntimeError("读取结果字节失败")
-    value = struct.unpack("<d", value_bytes)[0]
+    try:
+        status_bytes = read_memory(retptr, 4)
+        if len(status_bytes) != 4:
+            add_to_stack(store, 16)
+            raise RuntimeError("读取状态字节失败")
+        status = struct.unpack("<i", status_bytes)[0]
+        
+        value_bytes = read_memory(retptr + 8, 8)
+        if len(value_bytes) != 8:
+            add_to_stack(store, 16)
+            raise RuntimeError("读取结果字节失败")
+        value = struct.unpack("<d", value_bytes)[0]
+        logger.debug(f"读取结果成功: status={status}, value={value}")
+    except Exception as e:
+        add_to_stack(store, 16)  # 恢复栈指针
+        logger.error(f"读取 WASM 内存结果失败: {e}")
+        raise RuntimeError(f"读取 WASM 计算结果失败: {e}")
+    
     # 5. 恢复栈指针
-    add_to_stack(store, 16)
+    try:
+        add_to_stack(store, 16)
+        logger.debug("栈指针恢复成功")
+    except Exception as e:
+        logger.error(f"恢复栈指针失败: {e}")
+        # 不抛出异常，因为主要操作已完成
+    
     if status == 0:
         return None
     return int(value)
