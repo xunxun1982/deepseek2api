@@ -566,7 +566,8 @@ def compute_pow_answer(
         return ptr, length
 
     # 1. 申请 16 字节栈空间
-    retptr = add_to_stack(store, -16)
+    retptr_val = add_to_stack(store, -16)
+    retptr = int(retptr_val.value) if hasattr(retptr_val, "value") else int(retptr_val)
     # 2. 编码 challenge 与 prefix 到 wasm 内存中
     ptr_challenge, len_challenge = encode_string(challenge_str)
     ptr_prefix, len_prefix = encode_string(prefix)
