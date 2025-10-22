@@ -1,0 +1,32 @@
+# 简化版 Dockerfile（原标准版）
+# 使用方法: docker build -f Dockerfile.simple -t deepseek2api:simple .
+
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# 安装必要的系统依赖（curl_cffi 和 wasmtime 可能需要）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖文件
+COPY requirements.txt /app/
+
+# 安装 Python 依赖
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 复制项目文件
+COPY . /app
+
+# 创建非 root 用户
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 5001
+
+CMD ["python", "app.py"]

@@ -1,12 +1,12 @@
+# 使用 GitHub Container Registry 镜像的 docker-compose 配置
+# 使用方法: docker-compose -f docker-compose.ghcr.yml up -d
+
 version: "3.8"
 
 services:
   deepseek2api:
     container_name: deepseek2api
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: deepseek2api:latest
+    image: ghcr.io/xunxun1982/deepseek2api:latest
     restart: unless-stopped
     ports:
       - "5001:5001"
@@ -15,7 +15,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001/"]
+      test: ["CMD-SHELL", "curl -f http://localhost:5001/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
