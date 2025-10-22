@@ -21,6 +21,12 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 复制项目文件
 COPY . /app
 
+# 创建非 root 用户
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
+
 EXPOSE 5001
 
 CMD ["python", "app.py"]

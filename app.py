@@ -76,7 +76,8 @@ claude_api_key_queue = []  # 维护所有可用的Claude API keys
 # -------------------------- 代理池管理 --------------------------
 proxy_pool = []  # 代理池列表
 proxy_usage_count = {}  # 记录每个代理的使用次数
-proxy_enabled = True  # 代理池开关
+proxy_enabled = False  # 代理池开关（默认禁用，与 CONFIG 默认一致）
+proxy_lock = threading.Lock()  # 并发保护
 
 # 代理池配置限制
 MAX_PROXY_POOL_SIZE = 100  # 最大代理数量限制
@@ -95,8 +96,25 @@ def init_proxy_pool():
         proxy_usage_count = {}
         return
     
-    # 加载代理池配置
-    proxy_pool = CONFIG.get("proxy_pool", [])[:]
+    # 加载并规范化代理池配置（支持 'direct'/'none'/空字符串/None 表示直连）
+    raw_pool = CONFIG.get("proxy_pool", [])[:]
+    normalized = []
+    seen = set()
+    for p in raw_pool:
+        # 先判断是否为直连关键字（不 strip，保留原始空字符串）
+        if p is None or (isinstance(p, str) and p.lower().strip() in ("", "direct", "none")):
+            val = None  # 直连
+        elif isinstance(p, str):
+            val = p.strip()  # 去除代理 URL 两端空白
+        else:
+            val = p
+        
+        key = val or "DIRECT"
+        if key in seen:
+            continue  # 去重
+        seen.add(key)
+        normalized.append(val)
+    proxy_pool = normalized
     
     # 检查代理数量限制
     if len(proxy_pool) > MAX_PROXY_POOL_SIZE:
@@ -118,21 +136,27 @@ def get_next_proxy():
     if not proxy_enabled or not proxy_pool:
         return None
     
-    # 找出使用次数最少的代理索引
-    min_count = min(proxy_usage_count.values())
-    candidates = [idx for idx, count in proxy_usage_count.items() if count == min_count]
+    # 受锁保护的选择与计数，避免竞态
+    with proxy_lock:
+        min_count = min(proxy_usage_count.values())
+        candidates = [idx for idx, count in proxy_usage_count.items() if count == min_count]
+        selected_idx = random.choice(candidates)
+        proxy_usage_count[selected_idx] += 1
+        proxy = proxy_pool[selected_idx]
     
-    # 从候选中随机选择一个
-    selected_idx = random.choice(candidates)
-    proxy_usage_count[selected_idx] += 1
+    # 日志仅记录索引/主机，避免泄露凭据
+    try:
+        from urllib.parse import urlsplit
+        if proxy:
+            u = urlsplit(proxy)
+            safe_desc = f"{u.scheme}://{u.hostname or ''}"
+            logger.info(f"[get_next_proxy] 选择代理 #{selected_idx}: {safe_desc} (count={proxy_usage_count[selected_idx]})")
+        else:
+            logger.info(f"[get_next_proxy] 选择直连 (count={proxy_usage_count[selected_idx]})")
+    except Exception:
+        logger.info(f"[get_next_proxy] 选择代理 #{selected_idx} (count={proxy_usage_count[selected_idx]})")
     
-    proxy = proxy_pool[selected_idx]
-    if proxy:
-        logger.info(f"[get_next_proxy] 选择代理 #{selected_idx}: {proxy[:20]}... (使用次数: {proxy_usage_count[selected_idx]})")
-    else:
-        logger.info(f"[get_next_proxy] 选择直连 (使用次数: {proxy_usage_count[selected_idx]})")
-    
-    return proxy if proxy else None
+    return proxy or None
 
 
 def init_account_queue():
@@ -227,7 +251,8 @@ def login_deepseek_via_account(account):
         resp = requests.post(
             DEEPSEEK_LOGIN_URL, 
             headers=BASE_HEADERS, 
-            json=payload, 
+            json=payload,
+            timeout=30,  # 登录请求通常很快
             proxy=proxy,  # curl_cffi 使用 proxy 参数，自动识别协议
             impersonate="safari15_3"
         )
@@ -236,7 +261,7 @@ def login_deepseek_via_account(account):
         logger.error(f"[login_deepseek_via_account] 登录请求异常: {e}")
         raise HTTPException(status_code=500, detail="Account login failed: 请求异常")
     try:
-        logger.warning(f"[login_deepseek_via_account] {resp.text}")
+        logger.debug(f"[login_deepseek_via_account] 登录响应 status={resp.status_code}")
         data = resp.json()
     except Exception as e:
         logger.error(f"[login_deepseek_via_account] JSON解析失败: {e}")
@@ -429,7 +454,7 @@ def convert_deepseek_to_claude_format(deepseek_response, original_claude_model=C
 # ----------------------------------------------------------------------
 # Claude API 调用函数
 # ----------------------------------------------------------------------
-async def call_claude_via_openai(request: Request, claude_payload):
+async def call_claude_via_openai(request: Request, claude_payload, is_stream=True):
     """通过现有OpenAI接口调用Claude（实际调用DeepSeek）"""
     # 将Claude请求转换为DeepSeek请求
     deepseek_payload = convert_claude_to_deepseek(claude_payload)
@@ -483,7 +508,7 @@ async def call_claude_via_openai(request: Request, claude_payload):
             "search_enabled": search_enabled,
         }
 
-        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3)
+        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3, is_stream=is_stream)
         return deepseek_resp
         
     except Exception as e:
@@ -494,8 +519,21 @@ async def call_claude_via_openai(request: Request, claude_payload):
 # ----------------------------------------------------------------------
 # (6) 封装对话接口调用的重试机制
 # ----------------------------------------------------------------------
-def call_completion_endpoint(payload, headers, max_attempts=3):
+def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True):
+    """
+    调用对话接口
+    
+    Args:
+        payload: 请求负载
+        headers: 请求头
+        max_attempts: 最大重试次数
+        is_stream: 是否为流式请求（影响超时时间）
+    """
     attempts = 0
+    # 流式请求：60秒超时（客户端逐块接收）
+    # 非流式请求：600秒超时（服务器端需要读取完整响应）
+    timeout = 60 if is_stream else 600
+    
     while attempts < max_attempts:
         # 获取代理
         proxy = get_next_proxy()
@@ -505,7 +543,8 @@ def call_completion_endpoint(payload, headers, max_attempts=3):
                 DEEPSEEK_COMPLETION_URL, 
                 headers=headers, 
                 json=payload, 
-                stream=True, 
+                stream=True,
+                timeout=timeout,
                 proxy=proxy,  # curl_cffi 使用 proxy 参数，自动识别协议
                 impersonate="safari15_3"
             )
@@ -541,7 +580,8 @@ def create_session(request: Request, max_attempts=3):
             resp = requests.post(
                 DEEPSEEK_CREATE_SESSION_URL, 
                 headers=headers, 
-                json={"agent": "chat"}, 
+                json={"agent": "chat"},
+                timeout=30,  # 会话创建通常很快
                 proxy=proxy,  # curl_cffi 使用 proxy 参数，自动识别协议
                 impersonate="safari15_3"
             )
@@ -550,7 +590,7 @@ def create_session(request: Request, max_attempts=3):
             attempts += 1
             continue
         try:
-            logger.warning(f"[create_session] {resp.text}")
+            logger.debug(f"[create_session] 响应 status={resp.status_code}")
             data = resp.json()
             
         except Exception as e:
@@ -702,7 +742,7 @@ def get_pow_response(request: Request, max_attempts=3):
                 DEEPSEEK_CREATE_POW_URL,
                 headers=headers,
                 json={"target_path": "/api/v0/chat/completion"},
-                timeout=30,
+                timeout=30,  # PoW 请求通常很快
                 proxy=proxy,  # curl_cffi 使用 proxy 参数，自动识别协议
                 impersonate="safari15_3",
             )
@@ -970,14 +1010,17 @@ async def chat_completions(request: Request):
             "search_enabled": search_enabled,
         }
 
-        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3)
+        # 判断是否为流式请求
+        is_stream = bool(req_data.get("stream", False))
+        
+        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3, is_stream=is_stream)
         if not deepseek_resp:
             raise HTTPException(status_code=500, detail="Failed to get completion.")
         created_time = int(time.time())
         completion_id = f"{session_id}"
 
         # 流式响应（SSE）或普通响应
-        if bool(req_data.get("stream", False)):
+        if is_stream:
             if deepseek_resp.status_code != 200:
                 deepseek_resp.close()
                 return JSONResponse(
@@ -1494,7 +1537,10 @@ Remember: Output ONLY the JSON, no other text. The response must start with {{ a
             }
             payload["messages"].insert(0, system_message)
 
-        deepseek_resp = await call_claude_via_openai(request, payload)
+        # 判断是否为流式请求
+        is_stream = bool(req_data.get("stream", False))
+        
+        deepseek_resp = await call_claude_via_openai(request, payload, is_stream=is_stream)
         if not deepseek_resp:
             raise HTTPException(status_code=500, detail="Failed to get Claude response.")
 
@@ -1509,7 +1555,7 @@ Remember: Output ONLY the JSON, no other text. The response must start with {{ a
             )
 
         # 流式响应或普通响应
-        if bool(req_data.get("stream", False)):
+        if is_stream:
             def claude_sse_stream():
                 try:
                     message_id = f"msg_{int(time.time())}_{random.randint(1000, 9999)}"

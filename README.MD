@@ -117,11 +117,11 @@
       "token": ""
     }
   ],
-  "proxy_pool": [
-    "",
-    "http://proxy1.example.com:8080",
-    "socks5://proxy2.example.com:1080"
-  ]
+"proxy_pool": [
+  "",
+  "http://proxy1.example.com:8080",
+  "socks5://proxy2.example.com:1080"
+]
 }
 ```
  * keys - 你的 API 鉴权密钥
