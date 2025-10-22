@@ -216,9 +216,13 @@ def get_account_identifier(account):
 # ----------------------------------------------------------------------
 # (3) 登录函数：支持使用 email 或 mobile 登录
 # ----------------------------------------------------------------------
-def login_deepseek_via_account(account):
+def login_deepseek_via_account(account, proxy=None):
     """使用 account 中的 email 或 mobile 登录 DeepSeek，
     成功后将返回的 token 写入 account 并保存至配置文件，返回新 token。
+    
+    Args:
+        account: 账号信息
+        proxy: 代理地址（可选，如果不提供则获取新代理）
     """
     email = account.get("email", "").strip()
     mobile = account.get("mobile", "").strip()
@@ -244,8 +248,9 @@ def login_deepseek_via_account(account):
             "os": "android",
         }
     
-    # 获取代理
-    proxy = get_next_proxy()
+    # 如果没有提供代理，则获取新代理
+    if proxy is None:
+        proxy = get_next_proxy()
     
     try:
         resp = requests.post(
@@ -341,6 +346,7 @@ def determine_mode_and_token(request: Request):
       检查该账号是否已有 token，否则调用登录接口获取；
     - 否则，直接使用请求中的 Bearer 值作为 DeepSeek token。
     结果存入 request.state.deepseek_token；配置模式下同时存入 request.state.account 与 request.state.tried_accounts。
+    同时为整个请求选择一个代理，存入 request.state.proxy。
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -349,6 +355,10 @@ def determine_mode_and_token(request: Request):
         )
     caller_key = auth_header.replace("Bearer ", "", 1).strip()
     config_keys = CONFIG.get("keys", [])
+    
+    # 为整个请求选择一个代理
+    request.state.proxy = get_next_proxy()
+    
     if caller_key in config_keys:
         request.state.use_config_token = True
         request.state.tried_accounts = []  # 初始化已尝试账号
@@ -360,7 +370,7 @@ def determine_mode_and_token(request: Request):
             )
         if not selected_account.get("token", "").strip():
             try:
-                login_deepseek_via_account(selected_account)
+                login_deepseek_via_account(selected_account, request.state.proxy)
             except Exception as e:
                 logger.error(
                     f"[determine_mode_and_token] 账号 {get_account_identifier(selected_account)} 登录失败：{e}"
@@ -508,7 +518,9 @@ async def call_claude_via_openai(request: Request, claude_payload, is_stream=Tru
             "search_enabled": search_enabled,
         }
 
-        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3, is_stream=is_stream)
+        # 使用请求中的代理
+        proxy = getattr(request.state, 'proxy', None)
+        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3, is_stream=is_stream, proxy=proxy)
         return deepseek_resp
         
     except Exception as e:
@@ -519,7 +531,7 @@ async def call_claude_via_openai(request: Request, claude_payload, is_stream=Tru
 # ----------------------------------------------------------------------
 # (6) 封装对话接口调用的重试机制
 # ----------------------------------------------------------------------
-def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True):
+def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True, proxy=None):
     """
     调用对话接口
     
@@ -528,15 +540,18 @@ def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True):
         headers: 请求头
         max_attempts: 最大重试次数
         is_stream: 是否为流式请求（影响超时时间）
+        proxy: 代理地址（可选，如果不提供则获取新代理）
     """
     attempts = 0
     # 流式请求：60秒超时（客户端逐块接收）
     # 非流式请求：600秒超时（服务器端需要读取完整响应）
     timeout = 60 if is_stream else 600
     
-    while attempts < max_attempts:
-        # 获取代理
+    # 如果没有提供代理，则获取新代理
+    if proxy is None:
         proxy = get_next_proxy()
+    
+    while attempts < max_attempts:
         
         try:
             deepseek_resp = requests.post(
@@ -570,11 +585,13 @@ def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True):
 # ----------------------------------------------------------------------
 def create_session(request: Request, max_attempts=3):
     attempts = 0
+    # 使用请求中的代理
+    proxy = getattr(request.state, 'proxy', None)
+    if proxy is None:
+        proxy = get_next_proxy()
+    
     while attempts < max_attempts:
         headers = get_auth_headers(request)
-        
-        # 获取代理
-        proxy = get_next_proxy()
         
         try:
             resp = requests.post(
@@ -617,7 +634,7 @@ def create_session(request: Request, max_attempts=3):
                 if new_account is None:
                     break
                 try:
-                    login_deepseek_via_account(new_account)
+                    login_deepseek_via_account(new_account, proxy)
                 except Exception as e:
                     logger.error(
                         f"[create_session] 账号 {get_account_identifier(new_account)} 登录失败：{e}"
@@ -731,11 +748,13 @@ def compute_pow_answer(
 # ----------------------------------------------------------------------
 def get_pow_response(request: Request, max_attempts=3):
     attempts = 0
+    # 使用请求中的代理
+    proxy = getattr(request.state, 'proxy', None)
+    if proxy is None:
+        proxy = get_next_proxy()
+    
     while attempts < max_attempts:
         headers = get_auth_headers(request)
-        
-        # 获取代理
-        proxy = get_next_proxy()
         
         try:
             resp = requests.post(
@@ -806,7 +825,7 @@ def get_pow_response(request: Request, max_attempts=3):
                 if new_account is None:
                     break
                 try:
-                    login_deepseek_via_account(new_account)
+                    login_deepseek_via_account(new_account, proxy)
                 except Exception as e:
                     logger.error(
                         f"[get_pow_response] 账号 {get_account_identifier(new_account)} 登录失败：{e}"
@@ -1013,7 +1032,9 @@ async def chat_completions(request: Request):
         # 判断是否为流式请求
         is_stream = bool(req_data.get("stream", False))
         
-        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3, is_stream=is_stream)
+        # 使用请求中的代理
+        proxy = getattr(request.state, 'proxy', None)
+        deepseek_resp = call_completion_endpoint(payload, headers, max_attempts=3, is_stream=is_stream, proxy=proxy)
         if not deepseek_resp:
             raise HTTPException(status_code=500, detail="Failed to get completion.")
         created_time = int(time.time())
