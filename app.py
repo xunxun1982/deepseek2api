@@ -126,35 +126,76 @@ def init_proxy_pool():
     
     if proxy_pool:
         logger.info(f"[init_proxy_pool] 代理池已启用，共 {len(proxy_pool)} 个代理")
+        # 调试：显示代理池内容
+        for i, p in enumerate(proxy_pool):
+            if p is None:
+                logger.info(f"  #{i}: 直连")
+            else:
+                try:
+                    from urllib.parse import urlsplit
+                    u = urlsplit(p)
+                    logger.info(f"  #{i}: {u.scheme}://{u.hostname or ''}")
+                except Exception:
+                    logger.info(f"  #{i}: {p}")
     else:
         logger.info("[init_proxy_pool] 代理池为空，将使用直连")
 
 
 def get_next_proxy():
-    """从代理池中选择下一个代理，优先选择使用次数最少的代理以保证均匀分布"""
+    """
+    从代理池中选择下一个代理，按权重分配：
+    - 直连（None）：20% 权重
+    - 其他代理：80% 权重（平均分配）
+    """
     # 如果代理池被禁用或为空，返回 None（直连）
     if not proxy_enabled or not proxy_pool:
         return None
     
     # 受锁保护的选择与计数，避免竞态
     with proxy_lock:
-        min_count = min(proxy_usage_count.values())
-        candidates = [idx for idx, count in proxy_usage_count.items() if count == min_count]
-        selected_idx = random.choice(candidates)
+        # 统计直连和代理的数量
+        direct_indices = [idx for idx, p in enumerate(proxy_pool) if p is None]
+        proxy_indices = [idx for idx, p in enumerate(proxy_pool) if p is not None]
+        
+        # 如果只有直连或只有代理，直接选择
+        if not proxy_indices:
+            # 只有直连
+            selected_idx = random.choice(direct_indices)
+        elif not direct_indices:
+            # 只有代理，均匀分配
+            min_count = min(proxy_usage_count[idx] for idx in proxy_indices)
+            candidates = [idx for idx in proxy_indices if proxy_usage_count[idx] == min_count]
+            selected_idx = random.choice(candidates)
+        else:
+            # 既有直连又有代理，按权重分配
+            # 直连 20%，代理 80%
+            rand = random.random()
+            logger.debug(f"[get_next_proxy] 随机数: {rand:.3f}, 直连索引: {direct_indices}, 代理索引: {proxy_indices}")
+            if rand < 0.2:
+                # 选择直连（20%）
+                selected_idx = random.choice(direct_indices)
+                logger.debug(f"[get_next_proxy] 选择直连 (rand={rand:.3f} < 0.2)")
+            else:
+                # 选择代理（80%），优先选择使用次数最少的
+                min_count = min(proxy_usage_count[idx] for idx in proxy_indices)
+                candidates = [idx for idx in proxy_indices if proxy_usage_count[idx] == min_count]
+                selected_idx = random.choice(candidates)
+                logger.debug(f"[get_next_proxy] 选择代理 (rand={rand:.3f} >= 0.2)")
+        
         proxy_usage_count[selected_idx] += 1
         proxy = proxy_pool[selected_idx]
     
-    # 日志仅记录索引/主机，避免泄露凭据
+    # 简化日志输出（因为一次请求只调用一次）
     try:
         from urllib.parse import urlsplit
         if proxy:
             u = urlsplit(proxy)
             safe_desc = f"{u.scheme}://{u.hostname or ''}"
-            logger.info(f"[get_next_proxy] 选择代理 #{selected_idx}: {safe_desc} (count={proxy_usage_count[selected_idx]})")
+            logger.debug(f"[get_next_proxy] 选择代理 #{selected_idx}: {safe_desc}")
         else:
-            logger.info(f"[get_next_proxy] 选择直连 (count={proxy_usage_count[selected_idx]})")
+            logger.debug(f"[get_next_proxy] 选择直连")
     except Exception:
-        logger.info(f"[get_next_proxy] 选择代理 #{selected_idx} (count={proxy_usage_count[selected_idx]})")
+        logger.debug(f"[get_next_proxy] 选择代理 #{selected_idx}")
     
     return proxy or None
 
@@ -216,7 +257,7 @@ def get_account_identifier(account):
 # ----------------------------------------------------------------------
 # (3) 登录函数：支持使用 email 或 mobile 登录
 # ----------------------------------------------------------------------
-def login_deepseek_via_account(account, proxy=None):
+def login_deepseek_via_account(account, proxy='NOT_SET'):
     """使用 account 中的 email 或 mobile 登录 DeepSeek，
     成功后将返回的 token 写入 account 并保存至配置文件，返回新 token。
     
@@ -248,8 +289,8 @@ def login_deepseek_via_account(account, proxy=None):
             "os": "android",
         }
     
-    # 如果没有提供代理，则获取新代理
-    if proxy is None:
+    # 如果没有提供代理参数，则获取新代理（None 表示直连，也是有效值）
+    if proxy == 'NOT_SET':
         proxy = get_next_proxy()
     
     try:
@@ -358,6 +399,17 @@ def determine_mode_and_token(request: Request):
     
     # 为整个请求选择一个代理
     request.state.proxy = get_next_proxy()
+    # 日志：记录代理选择（简化版）
+    try:
+        from urllib.parse import urlsplit
+        if request.state.proxy:
+            u = urlsplit(request.state.proxy)
+            safe_desc = f"{u.scheme}://{u.hostname or ''}"
+            logger.info(f"[Request] 使用代理: {safe_desc}")
+        else:
+            logger.info(f"[Request] 使用直连")
+    except Exception:
+        logger.info(f"[Request] 使用代理: {request.state.proxy}")
     
     if caller_key in config_keys:
         request.state.use_config_token = True
@@ -531,7 +583,7 @@ async def call_claude_via_openai(request: Request, claude_payload, is_stream=Tru
 # ----------------------------------------------------------------------
 # (6) 封装对话接口调用的重试机制
 # ----------------------------------------------------------------------
-def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True, proxy=None):
+def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True, proxy='NOT_SET'):
     """
     调用对话接口
     
@@ -547,9 +599,11 @@ def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True, p
     # 非流式请求：600秒超时（服务器端需要读取完整响应）
     timeout = 60 if is_stream else 600
     
-    # 如果没有提供代理，则获取新代理
-    if proxy is None:
+    # 如果没有提供代理参数，则获取新代理（None 表示直连，也是有效值）
+    if proxy == 'NOT_SET':
+        # 只有在 proxy 参数未提供时才获取新代理
         proxy = get_next_proxy()
+        logger.warning(f"[call_completion_endpoint] proxy 参数未提供，重新获取代理")
     
     while attempts < max_attempts:
         
@@ -585,10 +639,12 @@ def call_completion_endpoint(payload, headers, max_attempts=3, is_stream=True, p
 # ----------------------------------------------------------------------
 def create_session(request: Request, max_attempts=3):
     attempts = 0
-    # 使用请求中的代理
-    proxy = getattr(request.state, 'proxy', None)
-    if proxy is None:
+    # 使用请求中的代理（None 表示直连，也是有效值）
+    proxy = getattr(request.state, 'proxy', 'NOT_SET')
+    if proxy == 'NOT_SET':
+        # 只有在 request.state.proxy 不存在时才获取新代理
         proxy = get_next_proxy()
+        logger.warning(f"[create_session] request.state.proxy 不存在，重新获取代理")
     
     while attempts < max_attempts:
         headers = get_auth_headers(request)
@@ -748,10 +804,12 @@ def compute_pow_answer(
 # ----------------------------------------------------------------------
 def get_pow_response(request: Request, max_attempts=3):
     attempts = 0
-    # 使用请求中的代理
-    proxy = getattr(request.state, 'proxy', None)
-    if proxy is None:
+    # 使用请求中的代理（None 表示直连，也是有效值）
+    proxy = getattr(request.state, 'proxy', 'NOT_SET')
+    if proxy == 'NOT_SET':
+        # 只有在 request.state.proxy 不存在时才获取新代理
         proxy = get_next_proxy()
+        logger.warning(f"[get_pow_response] request.state.proxy 不存在，重新获取代理")
     
     while attempts < max_attempts:
         headers = get_auth_headers(request)
