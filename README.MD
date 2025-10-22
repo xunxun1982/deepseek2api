@@ -13,6 +13,7 @@
 * [免责声明](#免责声明)
 * [接入准备](#接入准备)
   * [多账号接入](#多账号接入)
+  * [代理池配置](#代理池配置)
 * [Docker部署](#Docker部署)
 * [Docker-compose部署](#Docker-compose部署)
 * [Vercel部署](#Vercel部署)
@@ -48,6 +49,39 @@
 
 每次请求服务会从中挑选一个。
 
+### 代理池配置
+
+支持配置多个代理服务器，实现请求负载均衡和 IP 轮换。代理池支持以下特性：
+
+- **多种代理协议**: HTTP、HTTPS、SOCKS4、SOCKS5
+- **混合模式**: 可以配置部分直连（空字符串）、部分使用代理
+- **均匀分布**: 自动追踪每个代理的使用次数，确保所有代理被均匀使用
+- **随机选择**: 在使用次数相同的代理中随机选择，避免固定模式
+
+配置示例：
+
+```json
+{
+  "keys": ["key1", "key2"],
+  "accounts": [...],
+  "proxy_pool": [
+    "",
+    "http://proxy1.example.com:8080",
+    "https://user:pass@proxy2.example.com:8443",
+    "socks5://proxy3.example.com:1080",
+    "socks4://proxy4.example.com:1080"
+  ]
+}
+```
+
+代理格式说明：
+- 空字符串 `""` 表示不使用代理（直连）
+- HTTP/HTTPS: `http://host:port` 或 `http://user:pass@host:port`
+- SOCKS5: `socks5://host:port` 或 `socks5://user:pass@host:port`
+- SOCKS4: `socks4://host:port`
+
+详细说明请参考 [PROXY_POOL_README.md](PROXY_POOL_README.md)
+
 ## Docker部署
 
 请准备一台具有公网IP的服务器并将5001端口开放。
@@ -82,17 +116,58 @@
       "password": "password4",
       "token": ""
     }
+  ],
+  "proxy_pool": [
+    "",
+    "http://proxy1.example.com:8080",
+    "socks5://proxy2.example.com:1080"
   ]
 }
 ```
  * keys - 你的 API 鉴权密钥
  * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+ * proxy_pool_enabled - 代理池开关（可选，默认 false），设为 true 可启用代理池
+ * proxy_pool - 代理池配置（可选，最多 100 个），支持 HTTP/HTTPS/SOCKS4/SOCKS5 代理，空字符串表示直连
 
-拉取镜像并启动服务。
+### 方式一：使用预构建镜像
+
+拉取镜像并启动服务：
 
 ```shell
 docker run -d -p 5001:5001 -v "$(pwd)/config.json:/app/config.json" --name deepseek2api ghcr.io/iidamie/deepseek2api:latest
 ```
+
+### 方式二：本地构建镜像（推荐）
+
+```shell
+# 克隆项目
+git clone https://github.com/iidamie/deepseek2api.git
+cd deepseek2api
+
+# 构建镜像（默认使用优化版 Dockerfile，Python 3.13，多阶段构建）
+docker build -t deepseek2api:latest .
+
+# 启动服务
+docker run -d -p 5001:5001 -v "$(pwd)/config.json:/app/config.json" --name deepseek2api deepseek2api:latest
+```
+
+**默认 Dockerfile 特性**：
+- ✅ Python 3.13-slim（性能提升 10-15%）
+- ✅ 多阶段构建（镜像体积减小 30%）
+- ✅ 非 root 用户运行（安全性提升）
+- ✅ 内置健康检查（自动监控）
+
+### 方式三：使用简化版镜像（快速构建）
+
+```shell
+# 构建简化版镜像（单阶段构建，适合开发测试）
+docker build -f Dockerfile.simple -t deepseek2api:simple .
+
+# 启动服务
+docker run -d -p 5001:5001 -v "$(pwd)/config.json:/app/config.json" --name deepseek2api deepseek2api:simple
+```
+
+**Dockerfile 版本说明**：详见 [DOCKERFILE_VERSIONS.md](DOCKERFILE_VERSIONS.md)
 
 查看服务实时日志
 

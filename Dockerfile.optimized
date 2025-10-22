@@ -1,5 +1,6 @@
-# 多阶段构建 - 优化版 Dockerfile（默认）
-# 使用方法: docker build -t deepseek2api:latest .
+# 多阶段构建 - 优化版 Dockerfile（与默认版本相同）
+# 使用方法: docker build -f Dockerfile.optimized -t deepseek2api:optimized .
+# 注意: 此文件与 Dockerfile 内容相同，保留用于向后兼容
 
 # 构建阶段
 FROM python:3.13-slim AS builder

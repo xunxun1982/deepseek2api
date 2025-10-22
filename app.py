@@ -73,6 +73,67 @@ CONFIG = load_config()
 account_queue = []  # 维护所有可用账号
 claude_api_key_queue = []  # 维护所有可用的Claude API keys
 
+# -------------------------- 代理池管理 --------------------------
+proxy_pool = []  # 代理池列表
+proxy_usage_count = {}  # 记录每个代理的使用次数
+proxy_enabled = True  # 代理池开关
+
+# 代理池配置限制
+MAX_PROXY_POOL_SIZE = 100  # 最大代理数量限制
+
+
+def init_proxy_pool():
+    """初始化代理池"""
+    global proxy_pool, proxy_usage_count, proxy_enabled
+    
+    # 检查代理池开关（默认禁用，需要显式启用）
+    proxy_enabled = CONFIG.get("proxy_pool_enabled", False)
+    
+    if not proxy_enabled:
+        logger.info("[init_proxy_pool] 代理池已禁用")
+        proxy_pool = []
+        proxy_usage_count = {}
+        return
+    
+    # 加载代理池配置
+    proxy_pool = CONFIG.get("proxy_pool", [])[:]
+    
+    # 检查代理数量限制
+    if len(proxy_pool) > MAX_PROXY_POOL_SIZE:
+        logger.warning(f"[init_proxy_pool] 代理池数量 ({len(proxy_pool)}) 超过最大限制 ({MAX_PROXY_POOL_SIZE})，将截断")
+        proxy_pool = proxy_pool[:MAX_PROXY_POOL_SIZE]
+    
+    # 初始化使用计数
+    proxy_usage_count = {i: 0 for i in range(len(proxy_pool))}
+    
+    if proxy_pool:
+        logger.info(f"[init_proxy_pool] 代理池已启用，共 {len(proxy_pool)} 个代理")
+    else:
+        logger.info("[init_proxy_pool] 代理池为空，将使用直连")
+
+
+def get_next_proxy():
+    """从代理池中选择下一个代理，优先选择使用次数最少的代理以保证均匀分布"""
+    # 如果代理池被禁用或为空，返回 None（直连）
+    if not proxy_enabled or not proxy_pool:
+        return None
+    
+    # 找出使用次数最少的代理索引
+    min_count = min(proxy_usage_count.values())
+    candidates = [idx for idx, count in proxy_usage_count.items() if count == min_count]
+    
+    # 从候选中随机选择一个
+    selected_idx = random.choice(candidates)
+    proxy_usage_count[selected_idx] += 1
+    
+    proxy = proxy_pool[selected_idx]
+    if proxy:
+        logger.info(f"[get_next_proxy] 选择代理 #{selected_idx}: {proxy[:20]}... (使用次数: {proxy_usage_count[selected_idx]})")
+    else:
+        logger.info(f"[get_next_proxy] 选择直连 (使用次数: {proxy_usage_count[selected_idx]})")
+    
+    return proxy if proxy else None
+
 
 def init_account_queue():
     """初始化时从配置加载账号"""
@@ -87,6 +148,7 @@ def init_claude_api_key_queue():
     claude_api_key_queue = []
 
 
+init_proxy_pool()
 init_account_queue()
 init_claude_api_key_queue()
 
@@ -157,8 +219,18 @@ def login_deepseek_via_account(account):
             "device_id": "deepseek_to_api",
             "os": "android",
         }
+    
+    # 获取代理
+    proxy = get_next_proxy()
+    
     try:
-        resp = requests.post(DEEPSEEK_LOGIN_URL, headers=BASE_HEADERS, json=payload, impersonate="safari15_3")
+        resp = requests.post(
+            DEEPSEEK_LOGIN_URL, 
+            headers=BASE_HEADERS, 
+            json=payload, 
+            proxy=proxy,  # curl_cffi 使用 proxy 参数，自动识别协议
+            impersonate="safari15_3"
+        )
         resp.raise_for_status()
     except Exception as e:
         logger.error(f"[login_deepseek_via_account] 登录请求异常: {e}")
@@ -425,9 +497,17 @@ async def call_claude_via_openai(request: Request, claude_payload):
 def call_completion_endpoint(payload, headers, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
+        # 获取代理
+        proxy = get_next_proxy()
+        
         try:
             deepseek_resp = requests.post(
-                DEEPSEEK_COMPLETION_URL, headers=headers, json=payload, stream=True, impersonate="safari15_3"
+                DEEPSEEK_COMPLETION_URL, 
+                headers=headers, 
+                json=payload, 
+                stream=True, 
+                proxy=proxy,  # curl_cffi 使用 proxy 参数，自动识别协议
+                impersonate="safari15_3"
             )
         except Exception as e:
             logger.warning(f"[call_completion_endpoint] 请求异常: {e}")
@@ -453,9 +533,17 @@ def create_session(request: Request, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         headers = get_auth_headers(request)
+        
+        # 获取代理
+        proxy = get_next_proxy()
+        
         try:
             resp = requests.post(
-                DEEPSEEK_CREATE_SESSION_URL, headers=headers, json={"agent": "chat"}, impersonate="safari15_3"
+                DEEPSEEK_CREATE_SESSION_URL, 
+                headers=headers, 
+                json={"agent": "chat"}, 
+                proxy=proxy,  # curl_cffi 使用 proxy 参数，自动识别协议
+                impersonate="safari15_3"
             )
         except Exception as e:
             logger.error(f"[create_session] 请求异常: {e}")
@@ -605,12 +693,17 @@ def get_pow_response(request: Request, max_attempts=3):
     attempts = 0
     while attempts < max_attempts:
         headers = get_auth_headers(request)
+        
+        # 获取代理
+        proxy = get_next_proxy()
+        
         try:
             resp = requests.post(
                 DEEPSEEK_CREATE_POW_URL,
                 headers=headers,
                 json={"target_path": "/api/v0/chat/completion"},
                 timeout=30,
+                proxy=proxy,  # curl_cffi 使用 proxy 参数，自动识别协议
                 impersonate="safari15_3",
             )
         except Exception as e:
