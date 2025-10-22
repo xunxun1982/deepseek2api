@@ -64,6 +64,7 @@
 {
   "keys": ["key1", "key2"],
   "accounts": [...],
+  "proxy_pool_enabled": false,
   "proxy_pool": [
     "",
     "http://proxy1.example.com:8080",
@@ -79,8 +80,6 @@
 - HTTP/HTTPS: `http://host:port` 或 `http://user:pass@host:port`
 - SOCKS5: `socks5://host:port` 或 `socks5://user:pass@host:port`
 - SOCKS4: `socks4://host:port`
-
-详细说明请参考 [PROXY_POOL_README.md](PROXY_POOL_README.md)
 
 ## Docker部署
 
@@ -117,11 +116,12 @@
       "token": ""
     }
   ],
-"proxy_pool": [
-  "",
-  "http://proxy1.example.com:8080",
-  "socks5://proxy2.example.com:1080"
-]
+  "proxy_pool_enabled": false,
+  "proxy_pool": [
+    "",
+    "http://proxy1.example.com:8080",
+    "socks5://proxy2.example.com:1080"
+  ]
 }
 ```
 * keys - 你的 API 鉴权密钥
@@ -152,8 +152,8 @@ docker run -d -p 5001:5001 -v "$(pwd)/config.json:/app/config.json" --name deeps
 ```
 
 **默认 Dockerfile 特性**：
-- ✅ Python 3.13-slim（性能提升 10-15%）
-- ✅ 多阶段构建（镜像体积减小 30%）
+- ✅ Python 3.13-slim（预期性能提升）
+- ✅ 多阶段构建（减小镜像体积）
 - ✅ 非 root 用户运行（安全性提升）
 - ✅ 内置健康检查（自动监控）
 
@@ -166,8 +166,6 @@ docker build -f Dockerfile.simple -t deepseek2api:simple .
 # 启动服务
 docker run -d -p 5001:5001 -v "$(pwd)/config.json:/app/config.json" --name deepseek2api deepseek2api:simple
 ```
-
-**Dockerfile 版本说明**：详见 [DOCKERFILE_VERSIONS.md](DOCKERFILE_VERSIONS.md)
 
 查看服务实时日志
 
@@ -197,8 +195,10 @@ cd deepseek2api
 配置 config.json
 
 在当前目录下，修改 config.json 文件
- * keys - 你的 API 鉴权密钥
- * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+* keys - 你的 API 鉴权密钥
+* accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+* proxy_pool_enabled - 代理池开关（可选，默认 false）
+* proxy_pool - 代理池配置（可选，最多 100 个）
 
 启动服务
 
@@ -232,8 +232,10 @@ docker stop deepseek2api
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/import/project?template=https://github.com/iidamie/deepseek2api)
 
 部署完后，返回你的 Github 仓库配置 config.json
- * keys - 你的 API 鉴权密钥
- * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+* keys - 你的 API 鉴权密钥
+* accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+* proxy_pool_enabled - 代理池开关（可选，默认 false）
+* proxy_pool - 代理池配置（可选，最多 100 个）
 
 > [!WARNING]  
 > 一定要是私库，防止信息泄露！
@@ -257,8 +259,10 @@ pip install -r requirements.txt
 配置 config.json
 
 在当前目录下，修改 config.json 文件
- * keys - 你的 API 鉴权密钥
- * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+* keys - 你的 API 鉴权密钥
+* accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+* proxy_pool_enabled - 代理池开关（可选，默认 false）
+* proxy_pool - 代理池配置（可选，最多 100 个）
 
 启动服务
 
