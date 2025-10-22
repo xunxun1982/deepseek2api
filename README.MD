@@ -124,10 +124,10 @@
 ]
 }
 ```
- * keys - 你的 API 鉴权密钥
- * accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
- * proxy_pool_enabled - 代理池开关（可选，默认 false），设为 true 可启用代理池
- * proxy_pool - 代理池配置（可选，最多 100 个），支持 HTTP/HTTPS/SOCKS4/SOCKS5 代理，空字符串表示直连
+* keys - 你的 API 鉴权密钥
+* accounts - DeepSeek 账号列表，支持多个账号轮换，避免单账号受限
+* proxy_pool_enabled - 代理池开关（可选，默认 false），设为 true 可启用代理池
+* proxy_pool - 代理池配置（可选，最多 100 个），支持 HTTP/HTTPS/SOCKS4/SOCKS5 代理，空字符串表示直连
 
 ### 方式一：使用预构建镜像
 
